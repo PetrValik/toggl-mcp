@@ -1,0 +1,21 @@
+# Build output
+bin/
+obj/
+publish/
+
+# Local runtime state (mapping rules, Phase 3 token vault + Data Protection key ring)
+data/
+**/data/
+
+# Secrets — never commit
+.env
+*.env
+!.env.example
+appsettings.*.Local.json
+secrets.json
+
+# IDE / OS
+.vs/
+.idea/
+*.user
+.DS_Store

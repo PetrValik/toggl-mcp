@@ -1,0 +1,23 @@
+# Add to the cloud box's Caddyfile (/opt/caddy/Caddyfile or wherever the estate keeps it),
+# then `caddy reload`. Caddy and this container share the external `web` docker network,
+# so the upstream is the container name + internal port.
+#
+# Prereqs:
+#   • DNS: toggl.irminsul.uk → cloud public IP (204.168.233.148), proxied/grey per your DNS notes.
+#   • The MCP resource URL is https://toggl.irminsul.uk/mcp — it MUST byte-match
+#     AUTH__RESOURCEURL and the PRM `resource`.
+
+toggl.irminsul.uk {
+	encode zstd gzip
+
+	# MCP endpoint + its OAuth metadata + settings/health.
+	# Streamable HTTP uses SSE; disable proxy buffering so events flush promptly.
+	reverse_proxy toggl-mcp:8080 {
+		flush_interval -1
+	}
+
+	# Optional hardening: only Anthropic's egress range needs to reach /mcp.
+	# (Leave commented until verified — a wrong CIDR locks Claude out.)
+	# @notanthropic not remote_ip 160.79.104.0/21
+	# respond @notanthropic 403
+}
