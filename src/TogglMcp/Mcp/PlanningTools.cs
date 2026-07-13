@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Globalization;
 using System.Text.RegularExpressions;
@@ -67,7 +68,10 @@ public static class PlanningTools
             lockInfo.IsLocked, Fmt(lockInfo.LocksAt), days, summary);
     }
 
-    [McpServerTool(Name = "plan_week", ReadOnly = true, Idempotent = true, OpenWorld = true),
+    // Per-(user, plan) gate so concurrent/retried commit_plan calls can't both write.
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> CommitLocks = new();
+
+    [McpServerTool(Name = "plan_week", ReadOnly = true, OpenWorld = true),
      Description(
         "Prepare (but DO NOT write) a back-fill proposal for a week. Pass one entry per piece of work for the empty working days you want to fill — simply omit weekends and any days off (sick/vacation). Each entry is validated, its project resolved, deduped against what's already in Toggl, and checked against the lock. Returns a preview with a planId and per-entry status (new/duplicate/locked/invalid). Show it to the user; on approval call commit_plan(planId) to actually write it.")]
     public static async Task<PlanResult> PlanWeek(
@@ -113,6 +117,7 @@ public static class PlanningTools
         var existing = await toggl.GetTimeEntriesAsync(minDay, maxDay.AddDays(1), ct);
 
         var planned = new List<PlannedEntry>();
+        var plannedMarkers = new HashSet<string>(StringComparer.Ordinal); // dedup within this batch
         foreach (var (input, day, error) in parsed)
         {
             if (error is not null) { planned.Add(Invalid(input, day, error)); continue; }
@@ -165,20 +170,32 @@ public static class PlanningTools
                 continue;
             }
 
+            // Another proposed entry in this same batch already claims this sourceUid.
+            if (!plannedMarkers.Add(marker))
+            {
+                planned.Add(baseEntry with { Status = PlannedEntry.StatusDuplicate, Note = "duplicate of another proposed entry with the same sourceUid" });
+                continue;
+            }
+
             planned.Add(baseEntry);
         }
 
-        var newCount = planned.Count(p => p.Status == PlannedEntry.StatusNew);
+        var newEntries = planned.Where(p => p.Status == PlannedEntry.StatusNew).ToList();
+        var newCount = newEntries.Count;
         var dupCount = planned.Count(p => p.Status == PlannedEntry.StatusDuplicate);
         var blocked = planned.Count(p => p.Status is PlannedEntry.StatusLocked or PlannedEntry.StatusInvalid);
 
-        var weekStart = WeekLockPolicy.WeekStartOf(minDay);
+        // Report the week (and its lock deadline) of the committable entries, not the
+        // earliest submitted day — otherwise a stray locked past-week entry would make the
+        // summary claim WeekLocked=true even though there's something to commit.
+        var reportDay = newCount > 0 ? newEntries.Min(p => p.Day) : minDay;
+        var weekStart = WeekLockPolicy.WeekStartOf(reportDay);
         var lockInfo = locks.GetWeekLock(weekStart);
 
         string? planId = null;
         if (newCount > 0)
         {
-            planId = Guid.NewGuid().ToString("N")[..10];
+            planId = Guid.NewGuid().ToString("N");
             plans.Save(new WeekPlan
             {
                 Id = planId,
@@ -214,58 +231,83 @@ public static class PlanningTools
             return new CommitResult(planId, 0, 0, 0, [], "Plan not found or expired — run plan_week again.");
 
         var excludeSet = new HashSet<string>(exclude ?? [], StringComparer.Ordinal);
-        var wid = await toggl.GetWorkspaceIdAsync(ct);
         var toWrite = plan.Entries.Where(e => e.Status == PlannedEntry.StatusNew && !excludeSet.Contains(e.SourceUid)).ToList();
 
-        var dayCache = new Dictionary<DateOnly, IReadOnlyList<TogglTimeEntry>>();
         var results = new List<CommitEntryResult>();
         int created = 0, skipped = 0, failed = 0;
 
-        foreach (var e in toWrite)
+        // Serialise all commits of this plan so concurrent/retried calls can't both write
+        // (Toggl has no idempotency key; a marker re-check alone can't close a TOCTOU race).
+        var gate = CommitLocks.GetOrAdd($"{tokens.UserKey}:{planId}", _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
         {
-            if (!locks.IsEditable(e.Day))
-            {
-                results.Add(new CommitEntryResult(e.SourceUid, "skipped", $"week locked since planning; ask {locks.AdminContact} to reopen it", null));
-                skipped++;
-                continue;
-            }
+            var wid = await toggl.GetWorkspaceIdAsync(ct);
+            var dayCache = new Dictionary<DateOnly, IReadOnlyList<TogglTimeEntry>>();
+            var writtenMarkers = new HashSet<string>(StringComparer.Ordinal); // markers created in this run
 
-            // Defensive re-dedup (e.g. plan committed twice, or a race): one fetch per day, cached.
-            if (!dayCache.TryGetValue(e.Day, out var dayEntries))
+            foreach (var e in toWrite)
             {
-                dayEntries = await toggl.GetTimeEntriesAsync(e.Day, e.Day.AddDays(1), ct);
-                dayCache[e.Day] = dayEntries;
-            }
-            var marker = Marker(e.SourceUid);
-            var dup = dayEntries.FirstOrDefault(x => x.Description?.Contains(marker, StringComparison.Ordinal) == true);
-            if (dup is not null)
-            {
-                results.Add(new CommitEntryResult(e.SourceUid, "duplicate", $"already logged (entry {dup.Id})", dup.Id));
-                skipped++;
-                continue;
-            }
-
-            try
-            {
-                var entry = await toggl.CreateTimeEntryAsync(new CreateTimeEntryRequest
+                if (!locks.IsEditable(e.Day))
                 {
-                    CreatedWith = "toggl-mcp",
-                    WorkspaceId = wid,
-                    Start = e.Start,
-                    Duration = e.DurationSeconds,
-                    Description = e.Description,
-                    ProjectId = e.ProjectId,
-                    TaskId = e.TaskId,
-                    Tags = e.Tags is { Count: > 0 } ? e.Tags : null,
-                }, ct);
-                results.Add(new CommitEntryResult(e.SourceUid, "created", $"entry {entry.Id} on {e.Day:yyyy-MM-dd}", entry.Id));
-                created++;
+                    results.Add(new CommitEntryResult(e.SourceUid, "skipped", $"week locked since planning; ask {locks.AdminContact} to reopen it", null));
+                    skipped++;
+                    continue;
+                }
+
+                var marker = Marker(e.SourceUid);
+
+                // Re-dedup against Toggl (one fetch per day, cached) — catches a re-commit
+                // after the entries already landed.
+                if (!dayCache.TryGetValue(e.Day, out var dayEntries))
+                {
+                    dayEntries = await toggl.GetTimeEntriesAsync(e.Day, e.Day.AddDays(1), ct);
+                    dayCache[e.Day] = dayEntries;
+                }
+                var dup = dayEntries.FirstOrDefault(x => x.Description?.Contains(marker, StringComparison.Ordinal) == true);
+                if (dup is not null)
+                {
+                    results.Add(new CommitEntryResult(e.SourceUid, "duplicate", $"already logged (entry {dup.Id})", dup.Id));
+                    skipped++;
+                    continue;
+                }
+
+                // Same marker already written earlier in THIS run (the cached day list is a
+                // pre-write snapshot, so it wouldn't show it).
+                if (!writtenMarkers.Add(marker))
+                {
+                    results.Add(new CommitEntryResult(e.SourceUid, "duplicate", "already written in this commit run", null));
+                    skipped++;
+                    continue;
+                }
+
+                try
+                {
+                    var entry = await toggl.CreateTimeEntryAsync(new CreateTimeEntryRequest
+                    {
+                        CreatedWith = "toggl-mcp",
+                        WorkspaceId = wid,
+                        Start = e.Start,
+                        Duration = e.DurationSeconds,
+                        Description = e.Description,
+                        ProjectId = e.ProjectId,
+                        TaskId = e.TaskId,
+                        Tags = e.Tags is { Count: > 0 } ? e.Tags : null,
+                    }, ct);
+                    results.Add(new CommitEntryResult(e.SourceUid, "created", $"entry {entry.Id} on {e.Day:yyyy-MM-dd}", entry.Id));
+                    created++;
+                }
+                catch (TogglException ex)
+                {
+                    writtenMarkers.Remove(marker); // write failed — don't block a genuine retry
+                    results.Add(new CommitEntryResult(e.SourceUid, "error", ex.Message, null));
+                    failed++;
+                }
             }
-            catch (TogglException ex)
-            {
-                results.Add(new CommitEntryResult(e.SourceUid, "error", ex.Message, null));
-                failed++;
-            }
+        }
+        finally
+        {
+            gate.Release();
         }
 
         var excluded = plan.Entries.Count(e => e.Status == PlannedEntry.StatusNew && excludeSet.Contains(e.SourceUid));
