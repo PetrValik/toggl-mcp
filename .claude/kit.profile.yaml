@@ -1,0 +1,34 @@
+# claude-kit profile — toggl-mcp
+# A Toggl <-> Claude MCP server. NOTE: this is an MCP tool server, not an HTTP/EF web
+# API, so the vsa_dotnet pack is applied in adapted form (see packs.vsa_dotnet.notes).
+
+project:
+  name: toggl-mcp
+  stack: dotnet
+  kind: mcp-server
+
+build:
+  build: "dotnet build src/TogglMcp/TogglMcp.csproj"
+  test: ""            # no test project yet (Phase: live verification pending)
+
+git:
+  default_branch: main
+  can_push: true      # owner-authorised pushes to the private repo PetrValik/toggl-mcp
+  pr: false
+
+packs:
+  vsa_dotnet:
+    enabled: true
+    modules_root: src/TogglMcp/Features   # single flat module; one slice folder per MCP tool
+    features:
+      multi_tenant: false                 # no tenant accessor / global query filter
+      outbox: false                       # no outbox table / SaveChanges interceptor
+    notes: >
+      Adapted VSA for an MCP tool server. A slice = one MCP tool (use case) under
+      Features/{VerbNoun}/. The [McpServerTool] method is the thin "endpoint" (bind args
+      -> call handler -> return); the internal sealed Handler is the only logic layer;
+      request/response are slice-local records. There is NO MediatR / FluentValidation /
+      DbContext / Result<T> / Minimal-API endpoint here (no HTTP pipeline or database).
+      Module-shared infrastructure = ITogglClient, WeekLockPolicy, IPlanStore,
+      IMappingRuleStore, ITogglTokenProvider, and the shared ProjectDto contract.
+      Cross-slice coupling is still banned; slices share only via that infrastructure.

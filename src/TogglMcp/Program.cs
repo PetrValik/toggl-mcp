@@ -2,9 +2,9 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using ModelContextProtocol.AspNetCore.Authentication;
 using ModelContextProtocol.Authentication;
 using TogglMcp.Configuration;
+using TogglMcp.Features.ListProjects;
 using TogglMcp.Lock;
 using TogglMcp.Mapping;
-using TogglMcp.Mcp;
 using TogglMcp.Planning;
 using TogglMcp.Toggl;
 using TogglMcp.Tokens;
@@ -38,7 +38,7 @@ builder.Services.AddHttpClient<ITogglClient, TogglClient>(c =>
 // ── MCP server (Streamable HTTP) ─────────────────────────────────────────────────
 builder.Services.AddMcpServer()
     .WithHttpTransport()
-    .WithToolsFromAssembly(typeof(TogglTools).Assembly);
+    .WithToolsFromAssembly(typeof(ListProjectsTool).Assembly); // scans all Features/*/*Tool slices
 
 // ── Auth: Authentik OAuth resource server (Phase 1 may run with Auth:Enabled=false) ─
 if (auth.Enabled)

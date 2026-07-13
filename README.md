@@ -166,17 +166,26 @@ Claude discovers the Authentik authorization server automatically.
 
 ---
 
-## Layout
+## Layout — Vertical Slice Architecture (adapted for MCP)
+
+One folder per MCP tool under `Features/`. Each slice is a thin `*Tool` ("endpoint": bind
+args → call handler → return) + an `internal sealed *Handler` (the only logic layer) +
+slice-local request/response records. Slices never reference each other; they share only the
+module infrastructure below. (VSA adapted: no MediatR / FluentValidation / DbContext /
+`Result<T>` — this is an MCP tool server, not an HTTP/EF web API. See `.claude/kit.profile.yaml`.)
 
 ```
 src/TogglMcp/
   Program.cs              MCP + HTTP transport + auth toggle wiring
+  Features/               one vertical slice per tool (Tool + Handler + slice DTOs)
+    ListProjects/ · ListTasks/ · ListEntries/ · SuggestProject/ · AddMappingRule/
+    WeekStatus/ · PlanWeek/ · CommitPlan/
+  Contracts/              ProjectDto (module-shared response) + mapping
+  Toggl/                  ITogglClient/TogglClient (v9), throttle, models, exception   ┐
+  Tokens/                 ITogglTokenProvider (env now; vault in Phase 3)              │ module-
+  Mapping/                keyword→project rule store (JSON per user)                   │ shared
+  Lock/                   WeekLockPolicy (Fri-23:59 permanent lock, editable window)   │ infra
+  Planning/               WeekPlan + IPlanStore + SourceMarker (plan_week → commit_plan)┘
   Configuration/          TogglOptions, AuthOptions, StorageOptions, LockOptions
-  Toggl/                  ITogglClient/TogglClient (v9), throttle, models, exception
-  Tokens/                 ITogglTokenProvider (env now; vault in Phase 3)
-  Mapping/                keyword→project rule store (JSON per user)
-  Lock/                   WeekLockPolicy (Fri-23:59 permanent lock, editable window)
-  Planning/               WeekPlan + IPlanStore (frozen proposals: plan_week → commit_plan)
-  Mcp/                    TogglTools (reads/mapping) + PlanningTools (week flow) + DTOs
-Dockerfile · docker-compose.yml · deploy/Caddyfile.snippet · deploy/DEPLOY.md · .env.example
+Dockerfile · docker-compose.yml · deploy/Caddyfile.snippet · deploy/DEPLOY.md · .env.example · .claude/kit.profile.yaml
 ```
