@@ -15,7 +15,7 @@ You + colleagues: add that URL in Claude once + OAuth login. No install.
 ```
 
 **Source-agnostic by design:** the server has zero knowledge of where the work record
-comes from. Claude reads the source via *its own* connectors and just calls `log_time`.
+comes from. Claude reads the source via *its own* connectors and just proposes entries (`plan_week` → `commit_plan`).
 
 ---
 
@@ -39,12 +39,27 @@ comes from. Claude reads the source via *its own* connectors and just calls `log
 
 | Tool | Kind | Purpose |
 |---|---|---|
+| `week_status(weekOf?)` | read | Which working days of a week are empty vs filled, + when the week locks. |
+| `plan_week(entries[])` | read (stages) | Prepare a back-fill proposal — validate, resolve, dedup, lock-check. **Writes nothing**; returns a `planId`. |
+| `commit_plan(planId, exclude?)` | **write** | The **only** write path — replays exactly the approved plan into Toggl. |
 | `list_projects` | read | Active projects in the shared workspace. |
 | `list_tasks(projectId)` | read | Tasks under a project (Starter+ feature). |
 | `list_entries(from?, to?)` | read | Entries in a date range (default last 7 days). |
-| `log_time(...)` | write | Create a **completed** entry. Idempotent per `sourceUid`. |
 | `suggest_project(calendarName, title)` | read | Rule match (silent) or fuzzy guess (confirm). |
 | `add_mapping_rule(keyword, projectId)` | write | Teach a keyword→project rule. |
+
+### The write flow (enforced: propose → approve → commit)
+Back-fill is deliberately two-phase so a write can only ever be a replay of something you approved:
+
+1. **`week_status`** → shows the gaps and the lock deadline.
+2. **`plan_week(entries[])`** → the model proposes entries for the empty working days (weekends and days off simply omitted). The server validates each, resolves projects, dedups against Toggl, checks the lock, and **freezes** the resolved plan under a `planId`. **Nothing is written.**
+3. You **review** the preview → approve, drop rows, or ask for changes (re-plan).
+4. **`commit_plan(planId, exclude?)`** → writes exactly the frozen "new" entries. No re-interpretation; the model can't commit something different from the preview.
+
+There is **no direct `log_time`** — every write goes through an approved plan.
+
+### Timesheet lock (hard rule)
+Weeks lock **permanently at Friday 23:59 (Europe/Prague)**: each Friday the *previous* week closes and can never be edited again — only the workspace admin (**Josef Širůčka**) can reopen it. The tools compute this (`Lock` config), stay inside the editable window (current + last week), and **refuse locked days** with a "contact the admin" message instead of failing. Configurable via the `Lock` section.
 
 Adding a capability later = another `[McpServerTool]` method → instantly live on all devices.
 
@@ -137,10 +152,13 @@ Claude discovers the Authentik authorization server automatically.
 ## Gotchas baked into the code (don't undo them)
 
 - **Toggl Basic auth field order:** token is the *username*, literal `api_token` the password.
-- **Idempotency:** Toggl has no idempotency key — `log_time` embeds `⟨sourceUid⟩` in the
-  description and checks the day first. Always pass `sourceUid` or re-runs duplicate.
+- **Idempotency:** Toggl has no idempotency key — entries embed `⟨sourceUid⟩` in the
+  description; `plan_week` and `commit_plan` both dedup against it (and re-check at commit).
+  `sourceUid` is required, so re-running a plan never duplicates.
+- **Lock:** never write past Friday 23:59 (Europe/Prague) — locked weeks are refused, not
+  attempted. Only the admin can reopen a week.
 - **DST:** `start` is passed through verbatim as RFC3339 with the source's own offset —
-  never hardcode `+02:00`.
+  never hardcode `+02:00`; the day/week an entry counts for is computed in Europe/Prague.
 - **JWT audience:** Authentik's default `aud` is the client_id → add the `aud` scope mapping.
 - **Data Protection key ring (Phase 3):** must be persisted to `STORAGE__DATADIR` with a
   fixed application name, or a restart makes every stored token undecryptable.
@@ -153,10 +171,12 @@ Claude discovers the Authentik authorization server automatically.
 ```
 src/TogglMcp/
   Program.cs              MCP + HTTP transport + auth toggle wiring
-  Configuration/          TogglOptions, AuthOptions, StorageOptions
+  Configuration/          TogglOptions, AuthOptions, StorageOptions, LockOptions
   Toggl/                  ITogglClient/TogglClient (v9), throttle, models, exception
   Tokens/                 ITogglTokenProvider (env now; vault in Phase 3)
   Mapping/                keyword→project rule store (JSON per user)
-  Mcp/                    TogglTools (the six tools) + output DTOs
-Dockerfile · docker-compose.yml · deploy/Caddyfile.snippet · .env.example
+  Lock/                   WeekLockPolicy (Fri-23:59 permanent lock, editable window)
+  Planning/               WeekPlan + IPlanStore (frozen proposals: plan_week → commit_plan)
+  Mcp/                    TogglTools (reads/mapping) + PlanningTools (week flow) + DTOs
+Dockerfile · docker-compose.yml · deploy/Caddyfile.snippet · deploy/DEPLOY.md · .env.example
 ```

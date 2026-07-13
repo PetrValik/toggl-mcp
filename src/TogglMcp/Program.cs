@@ -2,8 +2,10 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using ModelContextProtocol.AspNetCore.Authentication;
 using ModelContextProtocol.Authentication;
 using TogglMcp.Configuration;
+using TogglMcp.Lock;
 using TogglMcp.Mapping;
 using TogglMcp.Mcp;
+using TogglMcp.Planning;
 using TogglMcp.Toggl;
 using TogglMcp.Tokens;
 
@@ -13,11 +15,15 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<TogglOptions>(builder.Configuration.GetSection(TogglOptions.SectionName));
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection(AuthOptions.SectionName));
 builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection(StorageOptions.SectionName));
+builder.Services.Configure<LockOptions>(builder.Configuration.GetSection(LockOptions.SectionName));
 var auth = builder.Configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>() ?? new AuthOptions();
 
 // ── Application services ────────────────────────────────────────────────────────
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<TogglThrottle>();
+builder.Services.AddSingleton<WeekLockPolicy>();
+builder.Services.AddSingleton<IPlanStore, InMemoryPlanStore>();             // ephemeral frozen plans (plan_week → commit_plan)
 builder.Services.AddScoped<ITogglTokenProvider, EnvTogglTokenProvider>();   // Phase 3: swap for the vault-backed provider
 builder.Services.AddSingleton<IMappingRuleStore, FileMappingRuleStore>();
 builder.Services.AddHttpClient<ITogglClient, TogglClient>(c =>
