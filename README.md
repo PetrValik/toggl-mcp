@@ -19,6 +19,13 @@ comes from. Claude reads the source via *its own* connectors and just proposes e
 
 ---
 
+## Docs
+
+- **[docs/USAGE.md](docs/USAGE.md)** — day-to-day usage: the read → propose → confirm → write flow, a tool reference with examples, mapping rules, the lock, and troubleshooting.
+- **[docs/DAILY-PLANNING.md](docs/DAILY-PLANNING.md)** — turning your activity notes into a reviewed Toggl day: the honesty guard rails, one-day-back default, and ready-to-use prompts.
+
+---
+
 ## Status
 
 - **Design:** complete (see the project note in the Obsidian vault).
@@ -74,7 +81,7 @@ cd src/TogglMcp
 
 # Your raw Toggl token (Toggl → Profile → API Token). NOT a toggl_sk_ key.
 export TOGGL__APITOKEN="<your-toggl-api-token>"
-# Auth stays off locally → /mcp is open. Local use ONLY.
+# Local dev (dotnet run = Development env) runs with auth OFF → /mcp is open. Local use ONLY.
 export AUTH__ENABLED=false
 
 dotnet run
@@ -95,7 +102,7 @@ All keys bind from `appsettings.json` or env (`__` = nesting). See `.env.example
 |---|---|---|
 | `TOGGL__APITOKEN` | — | Phase 1 account token (Basic-auth username; password is literal `api_token`). |
 | `TOGGL__WORKSPACEID` | *(from `/me`)* | Pin the workspace; else discovered once and cached. |
-| `AUTH__ENABLED` | `false` | Turn on JWT validation. **Must be true when public.** |
+| `AUTH__ENABLED` | `true` | JWT validation. **Secure by default**; auto-off under the Development env for local `dotnet run`. The app **refuses to start** with auth off outside Development. |
 | `AUTH__AUTHORITY` | — | Authentik OIDC issuer. |
 | `AUTH__RESOURCEURL` | — | Public MCP URL; must match JWT `aud` and PRM `resource`. |
 | `STORAGE__DATADIR` | `data` | Durable dir (mapping rules; Phase 3 vault + key ring). |
