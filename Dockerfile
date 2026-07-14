@@ -2,7 +2,9 @@
 # Multi-stage build. Same image runs on Hetzner (Phase 1) and company AWS (Phase 3) —
 # host swap is a redeploy, not a rewrite.
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# Base images pinned by digest for reproducible builds (bump deliberately — re-resolve a tag with
+# `docker buildx imagetools inspect mcr.microsoft.com/dotnet/<repo>:10.0`).
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5 AS build
 WORKDIR /src
 # Restore against the csproj first for layer caching.
 COPY src/TogglMcp/TogglMcp.csproj src/TogglMcp/
@@ -10,7 +12,7 @@ RUN dotnet restore src/TogglMcp/TogglMcp.csproj
 COPY . .
 RUN dotnet publish src/TogglMcp/TogglMcp.csproj -c Release -o /app /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:7644f992230d35cf230017189d4038c0ae0f7388b13f4f7ae1900a155bafb597 AS runtime
 WORKDIR /app
 # Non-root. The aspnet image ships an 'app' user (uid 1654).
 COPY --from=build /app .

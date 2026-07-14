@@ -10,10 +10,22 @@
 toggl.irminsul.uk {
 	encode zstd gzip
 
-	# MCP endpoint + its OAuth metadata + settings/health.
-	# Streamable HTTP uses SSE; disable proxy buffering so events flush promptly.
-	reverse_proxy toggl-mcp:8080 {
-		flush_interval -1
+	# HSTS: once seen over HTTPS, browsers/agents refuse plaintext for a year.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	# Only the intended routes reach the container; everything else is refused rather than
+	# blindly forwarded. Streamable HTTP uses SSE, so disable proxy buffering on /mcp.
+	handle /mcp /mcp/* {
+		reverse_proxy toggl-mcp:8080 {
+			flush_interval -1
+		}
+	}
+	# OAuth Protected Resource Metadata + health probe + the (auth-gated) settings page.
+	handle /.well-known/* /healthz /settings {
+		reverse_proxy toggl-mcp:8080
+	}
+	handle {
+		respond 404
 	}
 
 	# Optional hardening: only Anthropic's egress range needs to reach /mcp.
