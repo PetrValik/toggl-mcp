@@ -11,6 +11,7 @@ namespace TogglMcp.Configuration;
 /// </summary>
 public sealed class LockOptions
 {
+    /// <summary>Configuration section these options bind from (appsettings / env).</summary>
     public const string SectionName = "Lock";
 
     /// <summary>When false, nothing is ever considered locked (e.g. a workspace without locking).</summary>

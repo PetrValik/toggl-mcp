@@ -7,6 +7,7 @@ namespace TogglMcp.Configuration;
 /// </summary>
 public sealed class AuthOptions
 {
+    /// <summary>Configuration section these options bind from (appsettings / env).</summary>
     public const string SectionName = "Auth";
 
     /// <summary>
@@ -34,4 +35,16 @@ public sealed class AuthOptions
 
     /// <summary>Scopes advertised in the Protected Resource Metadata.</summary>
     public string[] Scopes { get; set; } = ["openid"];
+
+    /// <summary>
+    /// Optional: require this scope on the access token (checked against the space-delimited
+    /// <c>scope</c>/<c>scp</c> claim). Null/empty = any authenticated principal is allowed.
+    /// </summary>
+    public string? RequiredScope { get; set; }
+
+    /// <summary>
+    /// Optional allowlist of Authentik <c>sub</c> values permitted to use the server. Empty =
+    /// any authenticated principal is allowed. Set before opening the app to multiple users.
+    /// </summary>
+    public string[] AllowedSubjects { get; set; } = [];
 }

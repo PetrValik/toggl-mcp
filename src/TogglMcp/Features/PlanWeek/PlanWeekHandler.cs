@@ -4,23 +4,51 @@ using TogglMcp.Lock;
 using TogglMcp.Planning;
 using TogglMcp.Toggl;
 using TogglMcp.Tokens;
+using static System.FormattableString;
 
 namespace TogglMcp.Features.PlanWeek;
 
+/// <summary>
+/// The sole logic layer of the PlanWeek slice. Turns proposed entries into a validated,
+/// project-resolved, deduped, lock-checked preview and — if anything is writable — freezes it
+/// as a <see cref="WeekPlan"/> keyed by a planId for a later commit_plan. Writes nothing to
+/// Toggl itself; it only reads projects and existing entries to classify each proposal.
+/// </summary>
 internal sealed class PlanWeekHandler(
-    ITogglClient toggl,
-    ITogglTokenProvider tokens,
-    WeekLockPolicy locks,
-    IPlanStore plans,
-    TimeProvider clock)
+    ITogglClient toggl,                 // Toggl API reads: projects + existing entries for dedup
+    ITogglTokenProvider tokens,         // supplies UserKey stamped onto the frozen plan
+    WeekLockPolicy locks,               // day/week -> editable? and lock deadlines
+    IPlanStore plans,                   // where the frozen WeekPlan is saved under its planId
+    TimeProvider clock)                 // injectable now() for the plan's CreatedAt
 {
     // RFC3339 explicit offset: trailing 'Z' or ±HH[:]MM / ±HH.
     private static readonly Regex OffsetSuffix = new(@"(?:[Zz]|[+-]\d{2}(?::?\d{2})?)$", RegexOptions.Compiled);
 
+    // Guard rails against oversized/absurd input: the whole classified batch is frozen for the plan
+    // TTL, and resolution/dedup are O(entries·projects)/O(entries·existing); a wild date would also
+    // blow up the existing-entries fetch window.
+    private const int MaxEntries = 200;
+    private const int MaxDaysFromToday = 366;
+
+    /// <summary>
+    /// Classifies each proposed entry (new / duplicate / locked / invalid) and, when at least one
+    /// is writable, persists a frozen plan and returns its planId. Deliberately makes no writes to
+    /// Toggl — commit_plan is the write step.
+    /// </summary>
+    /// <param name="entries">Proposals for the week's empty working days; may be empty/null.</param>
+    /// <returns>A preview with per-entry verdicts, counts, week/lock info, and (if writable) a planId.</returns>
     public async Task<PlanResult> HandleAsync(PlanEntryInput[] entries, CancellationToken cancellationToken)
     {
+        // Nothing proposed -> empty preview, no plan, no Toggl calls.
         if (entries is null || entries.Length == 0)
             return new PlanResult(null, "", false, null, 0, 0, 0, [], "No entries proposed.");
+
+        // Reject oversized batches before doing any work (memory + CPU + plan-store footprint).
+        if (entries.Length > MaxEntries)
+            return new PlanResult(null, "", false, null, 0, 0, 0, [],
+                $"Too many entries ({entries.Length}); plan at most {MaxEntries} at once.");
+
+        var today = locks.Today();
 
         // First pass: parse + validate shape — no Toggl calls yet.
         var parsed = entries.Select(entry =>
@@ -32,7 +60,14 @@ internal sealed class PlanWeekHandler(
             else if (entry.TaskId is not null && entry.ProjectId is null && string.IsNullOrWhiteSpace(entry.ProjectName)) error = "taskId requires a project.";
             else if (!DateTimeOffset.TryParse(entry.Start, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dto) || !HasExplicitOffset(entry.Start))
                 error = $"start '{entry.Start}' must be RFC3339 with an explicit offset (e.g. 2026-07-13T09:00:00+02:00).";
-            else day = locks.LocalDayOf(dto);
+            else
+            {
+                var localDay = locks.LocalDayOf(dto);
+                // Reject dates absurdly far from today so one entry can't force a giant Toggl fetch window.
+                if (Math.Abs(localDay.DayNumber - today.DayNumber) > MaxDaysFromToday)
+                    error = $"start '{entry.Start}' is outside the supported ±{MaxDaysFromToday}-day window.";
+                else day = localDay;
+            }
             return (In: entry, Day: day, Error: error);
         }).ToList();
 
@@ -44,14 +79,18 @@ internal sealed class PlanWeekHandler(
                 $"All {invalids.Count} proposed entr{(invalids.Count == 1 ? "y is" : "ies are")} invalid; nothing to plan.");
         }
 
+        // At least one entry is shape-valid: now hit Toggl. Projects for id/name resolution...
         var projects = await toggl.GetProjectsAsync(cancellationToken);
         var byId = projects.ToDictionary(project => project.Id);
 
+        // ...and existing entries across the spanned day range for the ⟨marker⟩ dedup check.
+        // maxDay.AddDays(1) makes the end exclusive so the last day is fully covered.
         var validDays = parsed.Where(p => p.Day is not null).Select(p => p.Day!.Value).ToList();
         var minDay = validDays.Count > 0 ? validDays.Min() : locks.Today();
         var maxDay = validDays.Count > 0 ? validDays.Max() : locks.Today();
         var existing = await toggl.GetTimeEntriesAsync(minDay, maxDay.AddDays(1), cancellationToken);
 
+        // Second pass: resolve project, check lock + dedup, and assign each entry a final status.
         var planned = new List<PlannedEntry>();
         var plannedMarkers = new HashSet<string>(StringComparer.Ordinal); // dedup within this batch
         foreach (var (input, day, error) in parsed)
@@ -95,7 +134,7 @@ internal sealed class PlanWeekHandler(
             if (!locks.IsEditable(d))
             {
                 var dayLock = locks.GetWeekLock(d);
-                planned.Add(baseEntry with { Status = PlannedEntry.StatusLocked, Note = $"week is locked (closed {dayLock.LocksAt:yyyy-MM-dd HH:mm}); ask {locks.AdminContact} to reopen it" });
+                planned.Add(baseEntry with { Status = PlannedEntry.StatusLocked, Note = Invariant($"week is locked (closed {dayLock.LocksAt:yyyy-MM-dd HH:mm}); ask {locks.AdminContact} to reopen it") });
                 continue;
             }
 
@@ -128,6 +167,8 @@ internal sealed class PlanWeekHandler(
         var weekStart = WeekLockPolicy.WeekStartOf(reportDay);
         var lockInfo = locks.GetWeekLock(weekStart);
 
+        // Freeze the plan only if there's something to write; the whole classified batch is stored
+        // (not just the new ones) so commit_plan sees the full context under one planId.
         string? planId = null;
         if (newCount > 0)
         {
@@ -146,12 +187,16 @@ internal sealed class PlanWeekHandler(
             ? $"Nothing to write ({dupCount} already logged, {blocked} blocked). No plan created."
             : $"{newCount} entr{(newCount == 1 ? "y" : "ies")} ready — review, then commit_plan(\"{planId}\"). {dupCount} duplicate, {blocked} blocked.";
 
-        return new PlanResult(planId, weekStart.ToString("yyyy-MM-dd"), lockInfo.IsLocked, Fmt(lockInfo.LocksAt),
+        return new PlanResult(planId, weekStart.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), lockInfo.IsLocked, WeekLockPolicy.FormatDeadline(lockInfo.LocksAt),
             newCount, dupCount, blocked, planned.Select(ToDto).ToList(), summary);
     }
 
+    // True if the start string carries an explicit offset/Z — DateTimeOffset.TryParse would
+    // otherwise silently assume local time, mis-dating the entry near midnight.
     private static bool HasExplicitOffset(string s) => OffsetSuffix.IsMatch(s.Trim());
 
+    // Builds a rejected PlannedEntry that echoes the input for display; Day falls back to
+    // DateOnly.MinValue when the start couldn't even be parsed.
     private static PlannedEntry Invalid(PlanEntryInput input, DateOnly? day, string reason) => new()
     {
         Day = day ?? DateOnly.MinValue,
@@ -167,9 +212,9 @@ internal sealed class PlanWeekHandler(
         Note = reason,
     };
 
+    // Projects an internal PlannedEntry to its client-facing DTO (DateOnly -> yyyy-MM-dd,
+    // null Tags -> empty list).
     private static PlanEntryDto ToDto(PlannedEntry e) => new(
-        e.Day.ToString("yyyy-MM-dd"), e.SourceUid, e.Description, e.Start, e.DurationSeconds,
+        e.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), e.SourceUid, e.Description, e.Start, e.DurationSeconds,
         e.ProjectId, e.ProjectName, e.TaskId, e.Tags ?? [], e.Status, e.Note);
-
-    private static string Fmt(DateTimeOffset dto) => dto.ToString("yyyy-MM-dd HH:mm zzz");
 }

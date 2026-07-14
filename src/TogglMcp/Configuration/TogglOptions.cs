@@ -7,6 +7,7 @@ namespace TogglMcp.Configuration;
 /// </summary>
 public sealed class TogglOptions
 {
+    /// <summary>Configuration section these options bind from (appsettings / env).</summary>
     public const string SectionName = "Toggl";
 
     /// <summary>Base URL of the Toggl Track API. No trailing slash.</summary>

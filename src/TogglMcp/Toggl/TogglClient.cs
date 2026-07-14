@@ -11,6 +11,11 @@ using TogglMcp.Tokens;
 
 namespace TogglMcp.Toggl;
 
+/// <summary>
+/// Default <see cref="ITogglClient"/>: a transient typed HttpClient that authenticates
+/// each request with the current user's token, spaces calls through <see cref="TogglThrottle"/>,
+/// and retries with backoff. Transient lifetime is why the workspace-id cache is static.
+/// </summary>
 public sealed class TogglClient : ITogglClient
 {
     // Toggl JSON is snake_case in both directions. Null fields omitted so "No Project" stays valid.
@@ -26,12 +31,13 @@ public sealed class TogglClient : ITogglClient
     private static readonly ConcurrentDictionary<string, Lazy<Task<long>>> WsCache = new();
 
     private readonly HttpClient _http;
-    private readonly ITogglTokenProvider _tokens;
+    private readonly ITogglTokenProvider _tokens;   // supplies the per-user API token + cache key
     private readonly TogglThrottle _throttle;
     private readonly TogglOptions _options;
     private readonly ILogger<TogglClient> _logger;
-    private readonly string _baseUrl;
+    private readonly string _baseUrl;   // normalised (no trailing '/') so URL concatenation is safe
 
+    /// <summary>Captures DI dependencies and pins the normalised base URL for the client's lifetime.</summary>
     public TogglClient(
         HttpClient http,
         ITogglTokenProvider tokens,
@@ -47,6 +53,7 @@ public sealed class TogglClient : ITogglClient
         _baseUrl = _options.BaseUrl.TrimEnd('/');
     }
 
+    /// <summary>Returns the configured workspace id if set, else resolves and caches it from <c>/me</c>.</summary>
     public Task<long> GetWorkspaceIdAsync(CancellationToken ct = default)
     {
         if (_options.WorkspaceId is { } configured) return Task.FromResult(configured);
@@ -55,6 +62,7 @@ public sealed class TogglClient : ITogglClient
         return WsCache.GetOrAdd(key, _ => new Lazy<Task<long>>(() => FetchWorkspaceIdAsync(key))).Value;
     }
 
+    // Cold-miss body behind the Lazy<Task<>>: issues one /me and returns its default workspace id.
     private async Task<long> FetchWorkspaceIdAsync(string key)
     {
         try
@@ -71,9 +79,11 @@ public sealed class TogglClient : ITogglClient
         }
     }
 
+    /// <summary>GET <c>/me</c>. Counts against Toggl's ~30/hr /me quota — callers go through the cache.</summary>
     public Task<TogglMe> GetMeAsync(CancellationToken ct = default)
         => GetJsonAsync<TogglMe>($"{_baseUrl}/api/v9/me", ct);
 
+    /// <summary>GET active projects for the resolved workspace.</summary>
     public async Task<IReadOnlyList<TogglProject>> GetProjectsAsync(CancellationToken ct = default)
     {
         var wid = await GetWorkspaceIdAsync(ct).ConfigureAwait(false);
@@ -81,6 +91,7 @@ public sealed class TogglClient : ITogglClient
             .ConfigureAwait(false);
     }
 
+    /// <summary>GET tasks under a project in the resolved workspace.</summary>
     public async Task<IReadOnlyList<TogglTask>> GetTasksAsync(long projectId, CancellationToken ct = default)
     {
         var wid = await GetWorkspaceIdAsync(ct).ConfigureAwait(false);
@@ -88,6 +99,7 @@ public sealed class TogglClient : ITogglClient
             .ConfigureAwait(false);
     }
 
+    /// <summary>GET the user's entries for [from, to); dates formatted as Toggl's yyyy-MM-dd start_date/end_date params.</summary>
     public async Task<IReadOnlyList<TogglTimeEntry>> GetTimeEntriesAsync(DateOnly fromInclusive, DateOnly toExclusive, CancellationToken ct = default)
     {
         var url = $"{_baseUrl}/api/v9/me/time_entries" +
@@ -95,6 +107,7 @@ public sealed class TogglClient : ITogglClient
         return await GetJsonAsync<List<TogglTimeEntry>>(url, ct).ConfigureAwait(false);
     }
 
+    /// <summary>POST a new time entry to the request's workspace and return the persisted entry (with its assigned id).</summary>
     public async Task<TogglTimeEntry> CreateTimeEntryAsync(CreateTimeEntryRequest request, CancellationToken ct = default)
     {
         var url = $"{_baseUrl}/api/v9/workspaces/{request.WorkspaceId}/time_entries";
@@ -110,6 +123,7 @@ public sealed class TogglClient : ITogglClient
 
     // Helpers ------------------------------------------------------------------
 
+    // Shared GET+deserialize path; throws TogglException on an empty body so callers never see null.
     private async Task<T> GetJsonAsync<T>(string url, CancellationToken ct)
     {
         using var resp = await SendAsync(() => new HttpRequestMessage(HttpMethod.Get, url), ct).ConfigureAwait(false);
@@ -173,6 +187,8 @@ public sealed class TogglClient : ITogglClient
         }
     }
 
+    // Best-effort read of an error body for the exception message: truncated to 500 chars,
+    // never throws (a failed read must not mask the original API error).
     private static async Task<string> SafeReadAsync(HttpResponseMessage resp, CancellationToken ct)
     {
         try

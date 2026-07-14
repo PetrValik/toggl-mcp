@@ -7,5 +7,6 @@ namespace TogglMcp.Planning;
 /// </summary>
 public static class SourceMarker
 {
+    /// <summary>Wraps a source uid in the ⟨…⟩ marker exactly as it is embedded in a description, so writers and dedup scanners agree on one format.</summary>
     public static string For(string sourceUid) => $"⟨{sourceUid}⟩";
 }

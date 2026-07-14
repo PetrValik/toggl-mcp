@@ -6,7 +6,9 @@ namespace TogglMcp.Mapping;
 /// </summary>
 public sealed record MappingRule
 {
+    // Substring matched (case-insensitively) against the source text; unique per user — the key of the rule.
     public required string Keyword { get; init; }
+    // Toggl project the keyword resolves to; the authoritative target (names can drift, ids don't).
     public required long ProjectId { get; init; }
     /// <summary>Cached project name at rule-creation time, for display only.</summary>
     public string? ProjectName { get; init; }

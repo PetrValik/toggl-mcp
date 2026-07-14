@@ -14,9 +14,14 @@ namespace TogglMcp.Toggl;
 /// </summary>
 public sealed class TogglThrottle(IOptions<TogglOptions> options)
 {
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private long _lastTimestamp;
+    private readonly SemaphoreSlim _gate = new(1, 1);   // one holder at a time — serialises the spacing check
+    private long _lastTimestamp;   // Stopwatch ticks of the last release; 0 == never sent (skip the delay)
 
+    /// <summary>
+    /// Blocks until at least <c>MinRequestIntervalMs</c> has elapsed since the previous call,
+    /// then records "now" and returns. Holding the gate across the delay is deliberate: it
+    /// serialises callers so bursts leave one-at-a-time rather than all waking together.
+    /// </summary>
     public async Task WaitTurnAsync(CancellationToken ct)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);

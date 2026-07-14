@@ -8,6 +8,7 @@ namespace TogglMcp.Configuration;
 /// </summary>
 public sealed class StorageOptions
 {
+    /// <summary>Configuration section these options bind from (appsettings / env).</summary>
     public const string SectionName = "Storage";
 
     /// <summary>Directory for durable state. Mounted as a Docker volume in prod.</summary>
