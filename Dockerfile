@@ -14,6 +14,10 @@ RUN dotnet publish src/TogglMcp/TogglMcp.csproj -c Release -o /app /p:UseAppHost
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:7644f992230d35cf230017189d4038c0ae0f7388b13f4f7ae1900a155bafb597 AS runtime
 WORKDIR /app
+# The Ubuntu-based aspnet image ships neither wget nor curl — the HEALTHCHECK below needs one.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 # Non-root. The aspnet image ships an 'app' user (uid 1654).
 COPY --from=build /app .
 # Durable state (mapping rules; Phase 3 token vault + Data Protection key ring).
@@ -25,5 +29,5 @@ ENV ASPNETCORE_URLS=http://+:8080 \
 EXPOSE 8080
 VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["/bin/sh", "-c", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
+  CMD ["/bin/sh", "-c", "curl -fsS http://127.0.0.1:8080/healthz || exit 1"]
 ENTRYPOINT ["dotnet", "TogglMcp.dll"]

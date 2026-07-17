@@ -15,13 +15,16 @@ toggl.irminsul.uk {
 
 	# Only the intended routes reach the container; everything else is refused rather than
 	# blindly forwarded. Streamable HTTP uses SSE, so disable proxy buffering on /mcp.
-	handle /mcp /mcp/* {
+	# (`handle` takes at most ONE inline matcher token — multi-path routes need named matchers.)
+	@mcp path /mcp /mcp/*
+	handle @mcp {
 		reverse_proxy toggl-mcp:8080 {
 			flush_interval -1
 		}
 	}
 	# OAuth Protected Resource Metadata + health probe + the (auth-gated) settings page.
-	handle /.well-known/* /healthz /settings {
+	@meta path /.well-known/* /healthz /settings
+	handle @meta {
 		reverse_proxy toggl-mcp:8080
 	}
 	handle {

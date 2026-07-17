@@ -30,7 +30,7 @@ comes from. Claude reads the source via *its own* connectors and just proposes e
 
 - **Design:** complete (see the project note in the Obsidian vault).
 - **Phase 1 scaffold:** ✅ built and verified — server boots, Streamable HTTP transport
-  works, all six tools register, argument binding + validation confirmed via a real MCP
+  works, all eight tools register, argument binding + validation confirmed via a real MCP
   client. Not yet run against a live Toggl account or deployed.
 
 ---
