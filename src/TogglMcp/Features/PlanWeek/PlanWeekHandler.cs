@@ -84,11 +84,13 @@ internal sealed class PlanWeekHandler(
         var byId = projects.ToDictionary(project => project.Id);
 
         // ...and existing entries across the spanned day range for the ⟨marker⟩ dedup check.
-        // maxDay.AddDays(1) makes the end exclusive so the last day is fully covered.
+        // The range is widened ±1 day: Toggl's start_date/end_date filtering may bucket by
+        // UTC, so an entry starting 00:00–02:00 Europe/Prague sits on the previous UTC date
+        // and would escape an exact window. Marker matching keeps this false-positive-free.
         var validDays = parsed.Where(p => p.Day is not null).Select(p => p.Day!.Value).ToList();
         var minDay = validDays.Count > 0 ? validDays.Min() : locks.Today();
         var maxDay = validDays.Count > 0 ? validDays.Max() : locks.Today();
-        var existing = await toggl.GetTimeEntriesAsync(minDay, maxDay.AddDays(1), cancellationToken);
+        var existing = await toggl.GetTimeEntriesAsync(minDay.AddDays(-1), maxDay.AddDays(2), cancellationToken);
 
         // Second pass: resolve project, check lock + dedup, and assign each entry a final status.
         var planned = new List<PlannedEntry>();

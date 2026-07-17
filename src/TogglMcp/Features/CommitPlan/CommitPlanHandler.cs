@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using Microsoft.Extensions.Options;
+using TogglMcp.Configuration;
 using TogglMcp.Lock;
 using TogglMcp.Planning;
 using TogglMcp.Toggl;
@@ -16,7 +18,8 @@ internal sealed class CommitPlanHandler(
     ITogglClient toggl,
     ITogglTokenProvider tokens,
     WeekLockPolicy locks,
-    IPlanStore plans)
+    IPlanStore plans,
+    IOptions<TogglOptions> togglOptions)
 {
     // Per-user commit gate: serialises a user's commit_plan calls so concurrent/retried ones can't
     // double-write. Keyed by UserKey (not planId) so the dictionary is bounded by the user
@@ -70,10 +73,13 @@ internal sealed class CommitPlanHandler(
                 var marker = SourceMarker.For(entry.SourceUid);
 
                 // Re-dedup against Toggl (one fetch per day, cached) — catches a re-commit after
-                // the entries already landed.
+                // the entries already landed. Fetch ±1 day around the local day: Toggl's
+                // start_date/end_date filtering may bucket by UTC, so an entry starting
+                // 00:00–02:00 Europe/Prague would fall on the previous UTC date and escape an
+                // exact-day window. The marker match makes the wider window false-positive-free.
                 if (!dayCache.TryGetValue(entry.Day, out var dayEntries))
                 {
-                    dayEntries = await toggl.GetTimeEntriesAsync(entry.Day, entry.Day.AddDays(1), cancellationToken);
+                    dayEntries = await toggl.GetTimeEntriesAsync(entry.Day.AddDays(-1), entry.Day.AddDays(2), cancellationToken);
                     dayCache[entry.Day] = dayEntries;
                 }
                 var dup = dayEntries.FirstOrDefault(x => x.Description?.Contains(marker, StringComparison.Ordinal) == true);
@@ -98,7 +104,7 @@ internal sealed class CommitPlanHandler(
                 {
                     var written = await toggl.CreateTimeEntryAsync(new CreateTimeEntryRequest
                     {
-                        CreatedWith = "toggl-mcp",
+                        CreatedWith = togglOptions.Value.CreatedWith,
                         WorkspaceId = wid,
                         Start = entry.Start,
                         Duration = entry.DurationSeconds,

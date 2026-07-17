@@ -83,12 +83,26 @@ public sealed class TogglClient : ITogglClient
     public Task<TogglMe> GetMeAsync(CancellationToken ct = default)
         => GetJsonAsync<TogglMe>($"{_baseUrl}/api/v9/me", ct);
 
-    /// <summary>GET active projects for the resolved workspace.</summary>
+    /// <summary>GET active projects for the resolved workspace, following pagination.</summary>
     public async Task<IReadOnlyList<TogglProject>> GetProjectsAsync(CancellationToken ct = default)
     {
         var wid = await GetWorkspaceIdAsync(ct).ConfigureAwait(false);
-        return await GetJsonAsync<List<TogglProject>>($"{_baseUrl}/api/v9/workspaces/{wid}/projects?active=true", ct)
-            .ConfigureAwait(false);
+        // Toggl paginates this endpoint (~151/page by default) — without explicit paging a
+        // larger workspace silently truncates, which would also degrade plan_week project
+        // resolution and suggest_project. Page at the 200 max until a short page arrives.
+        // The page cap is a runaway guard should the server ever ignore the page param.
+        const int perPage = 200;
+        const int maxPages = 50;
+        var all = new List<TogglProject>();
+        for (var page = 1; page <= maxPages; page++)
+        {
+            var batch = await GetJsonAsync<List<TogglProject>>(
+                    $"{_baseUrl}/api/v9/workspaces/{wid}/projects?active=true&per_page={perPage}&page={page}", ct)
+                .ConfigureAwait(false);
+            all.AddRange(batch);
+            if (batch.Count < perPage) break;
+        }
+        return all;
     }
 
     /// <summary>GET tasks under a project in the resolved workspace.</summary>
@@ -112,7 +126,7 @@ public sealed class TogglClient : ITogglClient
     {
         var url = $"{_baseUrl}/api/v9/workspaces/{request.WorkspaceId}/time_entries";
         // Toggl has no idempotency key: a 5xx/timeout may mean the entry WAS persisted.
-        // Retrying then would duplicate it, so retry the POST only on 429/402 (request
+        // Retrying then would duplicate it, so retry the POST only on 429 (request
         // rejected before processing), never on server errors.
         using var resp = await SendAsync(
             () => new HttpRequestMessage(HttpMethod.Post, url) { Content = JsonContent.Create(request, options: Json) },
@@ -133,8 +147,8 @@ public sealed class TogglClient : ITogglClient
 
     /// <summary>
     /// Sends with the current user's Basic-auth header, spacing requests via the
-    /// throttle and retrying with exponential backoff. 429/402 (request rejected before
-    /// processing) are always retried; 408/5xx are retried only when
+    /// throttle and retrying with exponential backoff. 429 (request rejected before
+    /// processing) is always retried; 408/5xx are retried only when
     /// <paramref name="retryOnServerErrors"/> is true — set it false for non-idempotent
     /// writes, where a persisted-then-failed response must not be re-sent. The request is
     /// rebuilt from <paramref name="factory"/> each attempt so POST content is resendable.
@@ -165,10 +179,12 @@ public sealed class TogglClient : ITogglClient
             if (resp.IsSuccessStatusCode) return resp;
 
             var status = resp.StatusCode;
-            var rateOrQuota = status is HttpStatusCode.TooManyRequests   // 429 leaky bucket
-                or HttpStatusCode.PaymentRequired;                       // 402 hourly plan quota
+            // 402 is deliberately NOT retryable: Toggl answers 402 for paid-plan features
+            // (e.g. tasks on a free workspace) — a deterministic rejection that retrying
+            // only turns into ~47s of pointless backoff before the same error.
+            var rateLimited = status is HttpStatusCode.TooManyRequests;  // 429 leaky bucket
             var serverError = status is HttpStatusCode.RequestTimeout || (int)status >= 500;
-            var retryable = rateOrQuota || (retryOnServerErrors && serverError);
+            var retryable = rateLimited || (retryOnServerErrors && serverError);
 
             if (retryable && attempt < _options.MaxRetries)
             {

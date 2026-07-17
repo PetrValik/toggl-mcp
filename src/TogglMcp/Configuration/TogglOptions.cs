@@ -37,7 +37,7 @@ public sealed class TogglOptions
     /// </summary>
     public int MinRequestIntervalMs { get; set; } = 1100;
 
-    /// <summary>Max retry attempts on 429/402/5xx before giving up.</summary>
+    /// <summary>Max retry attempts on 429/5xx before giving up (402 fails fast).</summary>
     public int MaxRetries { get; set; } = 5;
 
     /// <summary>Base backoff (doubled each retry, capped at 30s). Toggl sends no Retry-After.</summary>
