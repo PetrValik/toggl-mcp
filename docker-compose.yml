@@ -13,7 +13,7 @@ services:
       ASPNETCORE_URLS: "http://+:8080"
       STORAGE__DATADIR: "/data"
     volumes:
-      - toggl-mcp-data:/data          # mapping rules + (Phase 3) token vault & DP key ring
+      - toggl-mcp-data:/data          # mapping rules, commit ledger + (Phase 3) token vault & DP key ring
     networks:
       - web
     expose:

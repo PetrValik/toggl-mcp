@@ -20,7 +20,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 # Non-root. The aspnet image ships an 'app' user (uid 1654).
 COPY --from=build /app .
-# Durable state (mapping rules; Phase 3 token vault + Data Protection key ring).
+# Durable state (mapping rules, commit ledger; Phase 3 token vault + Data Protection key ring).
 RUN mkdir -p /data && chown -R app:app /data
 USER app
 ENV ASPNETCORE_URLS=http://+:8080 \

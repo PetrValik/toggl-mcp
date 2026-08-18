@@ -9,7 +9,7 @@ project:
 
 build:
   build: "dotnet build src/TogglMcp/TogglMcp.csproj"
-  test: ""            # no test project yet (Phase: live verification pending)
+  test: "dotnet test TogglMcp.slnx"
 
 git:
   default_branch: main

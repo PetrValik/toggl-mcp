@@ -8,7 +8,7 @@ namespace TogglMcp.Features.PlanWeek;
 public sealed record PlanEntryDto(
     string Day,                     // local calendar day the entry counts for (yyyy-MM-dd)
     string SourceUid,               // idempotency key echoed back
-    string Description,             // description as proposed (marker NOT yet appended here)
+    string Description,             // description exactly as proposed — this is what Toggl gets
     string Start,                   // original RFC3339 start string, verbatim
     long DurationSeconds,
     long? ProjectId,                // resolved id (null = No Project or unresolved invalid)

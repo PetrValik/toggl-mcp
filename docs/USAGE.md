@@ -109,7 +109,7 @@ Per-entry `status` tells you what will happen:
 | status | meaning |
 |---|---|
 | `new` | will be written on commit |
-| `duplicate` | already in Toggl (matched on `sourceUid`), or repeated within this batch — will be skipped |
+| `duplicate` | already in Toggl (matched on `sourceUid` via the ledger, or on the entry's own content), or repeated within this batch — will be skipped |
 | `locked` | its week is already locked — will be refused |
 | `invalid` | failed validation (missing `sourceUid`, non-positive duration, unknown project, `start` without an offset, …) — never written |
 
@@ -205,13 +205,26 @@ Lock timing is configurable via the `Lock` section (`LOCK__…` env) — see REA
 
 ## Idempotency: safe re-runs
 
-Toggl has no idempotency key, so every entry embeds its `sourceUid` as a hidden marker
-(`⟨sourceUid⟩`) in the description. Both `plan_week` and `commit_plan` dedup against it —
-and `commit_plan` re-checks at write time and serializes concurrent commits of the same
+Toggl has no idempotency key. **Nothing is written into the description to compensate** — the
+entry reads exactly as you approved it. Instead the server recognises an already-logged entry
+three ways, most precise first:
+
+1. **The ledger.** On commit, `sourceUid → Toggl entry id` is recorded in a durable per-user
+   file under `STORAGE__DATADIR`. A record is only trusted while that entry still exists in
+   Toggl — delete an entry and it can be written again.
+2. **The entry's own content** — same start instant, same duration, same project. This catches
+   work you logged by hand in the Toggl UI, and re-runs where the `sourceUid` changed.
+3. **The legacy `⟨sourceUid⟩` marker**, for entries written before 2026-08-18, when the marker
+   was still embedded in descriptions. Read only; never written.
+
+`plan_week` and `commit_plan` share one dedup implementation, so the preview and the write can't
+disagree; `commit_plan` re-checks at write time and serializes concurrent commits of the same
 plan. Practical consequences:
 
 - **Re-running the same plan never double-logs.** A second `plan_week` with the same
   `sourceUid`s marks them `duplicate`; a re-`commit_plan` skips what already landed.
+- **Keep `STORAGE__DATADIR` on a persisted volume.** Losing it is not fatal — content matching
+  still catches unedited entries — but the exact `sourceUid` memory goes with it.
 - **Always give each source record a stable `sourceUid`** (`calevt:<id>`, `gitsha:<sha>`,
   `note:<uid>`…). It's required precisely so this guarantee holds.
 - **`start` must be RFC3339 with a real offset** (`…+02:00`, not bare local time). The
@@ -226,7 +239,7 @@ plan. Practical consequences:
 | Entry shows `status: "invalid"` — "start must be RFC3339 with an explicit offset" | `start` lacks an offset. Use `2026-07-14T09:00:00+02:00`, not `2026-07-14T09:00:00`. |
 | `status: "invalid"` — "sourceUid is required" | Every proposed entry needs a stable `sourceUid`. |
 | `status: "locked"` / commit `skipped` — "ask the admin to reopen" | The week is past the Friday 23:59 lock. Only the workspace admin can reopen it. |
-| `plan_week` says `duplicate` for something not in Toggl | Two proposed entries share a `sourceUid`, or it was already logged under that marker earlier. Give distinct ids. |
+| `plan_week` says `duplicate` for something not in Toggl | Two proposed entries share a `sourceUid`, or share the same start/duration/project. Give distinct ids and non-overlapping times. |
 | "project '…' not found" | `projectName` didn't match. Call `list_projects` and pass the exact `projectId`. |
 | Nothing writes, `planId` is null | The plan had no `new` entries (all duplicate/blocked/invalid). Nothing to commit. |
 | Connector won't authenticate | Auth/Authentik setup — see README → *Authentik setup checklist*. |

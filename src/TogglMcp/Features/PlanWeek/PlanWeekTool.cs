@@ -17,7 +17,7 @@ public static class PlanWeekTool
 {
     /// <summary>
     /// Builds a back-fill preview for a week without writing anything. Leading service-typed
-    /// parameters (toggl, tokens, locks, plans, clock) plus <paramref name="cancellationToken"/>
+    /// parameters (toggl, tokens, locks, plans, ledger, clock) plus <paramref name="cancellationToken"/>
     /// are injected by the MCP framework; only <paramref name="entries"/> is part of the tool's
     /// JSON input schema.
     /// </summary>
@@ -29,8 +29,9 @@ public static class PlanWeekTool
         ITogglTokenProvider tokens,
         WeekLockPolicy locks,
         IPlanStore plans,
+        ILedgerStore ledger,
         TimeProvider clock,
         [Description("Proposed entries for the week's empty working days.")] PlanEntryInput[] entries,
         CancellationToken cancellationToken = default)
-        => new PlanWeekHandler(toggl, tokens, locks, plans, clock).HandleAsync(entries, cancellationToken);
+        => new PlanWeekHandler(toggl, tokens, locks, plans, ledger, clock).HandleAsync(entries, cancellationToken);
 }

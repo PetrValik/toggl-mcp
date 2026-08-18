@@ -19,6 +19,7 @@ internal sealed class PlanWeekHandler(
     ITogglTokenProvider tokens,         // supplies UserKey stamped onto the frozen plan
     WeekLockPolicy locks,               // day/week -> editable? and lock deadlines
     IPlanStore plans,                   // where the frozen WeekPlan is saved under its planId
+    ILedgerStore ledger,                // what this server has already written, per user
     TimeProvider clock)                 // injectable now() for the plan's CreatedAt
 {
     // RFC3339 explicit offset: trailing 'Z' or ±HH[:]MM / ±HH.
@@ -83,18 +84,24 @@ internal sealed class PlanWeekHandler(
         var projects = await toggl.GetProjectsAsync(cancellationToken);
         var byId = projects.ToDictionary(project => project.Id);
 
-        // ...and existing entries across the spanned day range for the ⟨marker⟩ dedup check.
-        // The range is widened ±1 day: Toggl's start_date/end_date filtering may bucket by
-        // UTC, so an entry starting 00:00–02:00 Europe/Prague sits on the previous UTC date
-        // and would escape an exact window. Marker matching keeps this false-positive-free.
+        // ...and existing entries across the spanned day range for the dedup check. The range is
+        // widened ±1 day: Toggl's start_date/end_date filtering may bucket by UTC, so an entry
+        // starting 00:00–02:00 Europe/Prague sits on the previous UTC date and would escape an
+        // exact window. Matching on identity (ledger/fingerprint/legacy marker) rather than on the
+        // window itself keeps the wider range false-positive-free.
         var validDays = parsed.Where(p => p.Day is not null).Select(p => p.Day!.Value).ToList();
         var minDay = validDays.Count > 0 ? validDays.Min() : locks.Today();
         var maxDay = validDays.Count > 0 ? validDays.Max() : locks.Today();
         var existing = await toggl.GetTimeEntriesAsync(minDay.AddDays(-1), maxDay.AddDays(2), cancellationToken);
+        var recorded = await ledger.GetAsync(tokens.UserKey, minDay.AddDays(-1), maxDay.AddDays(1), cancellationToken);
+        var duplicates = new DuplicateFinder(existing, recorded);
 
         // Second pass: resolve project, check lock + dedup, and assign each entry a final status.
         var planned = new List<PlannedEntry>();
-        var plannedMarkers = new HashSet<string>(StringComparer.Ordinal); // dedup within this batch
+        // Dedup within this batch: two proposals must not both be planned when they carry the same
+        // sourceUid, or describe the same slot of the day, since neither is in Toggl yet.
+        var claimedUids = new HashSet<string>(StringComparer.Ordinal);
+        var claimedFingerprints = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (input, day, error) in parsed)
         {
             if (error is not null) { planned.Add(Invalid(input, day, error)); continue; }
@@ -117,13 +124,13 @@ internal sealed class PlanWeekHandler(
                 projectName = match.Name;
             }
 
-            var marker = SourceMarker.For(input.SourceUid);
-            var description = string.IsNullOrWhiteSpace(input.Description) ? marker : $"{input.Description} {marker}";
             var baseEntry = new PlannedEntry
             {
                 Day = d,
                 SourceUid = input.SourceUid,
-                Description = description,
+                // Verbatim: what the user approves in the preview is byte-for-byte what Toggl gets.
+                // Identity lives in the ledger and in the entry's own content, never in this string.
+                Description = input.Description,
                 Start = input.Start,
                 DurationSeconds = input.DurationSeconds,
                 ProjectId = projectId,
@@ -140,17 +147,23 @@ internal sealed class PlanWeekHandler(
                 continue;
             }
 
-            var dup = existing.FirstOrDefault(x => x.Description?.Contains(marker, StringComparison.Ordinal) == true);
+            var dup = duplicates.Find(input.SourceUid, input.Start, input.DurationSeconds, projectId);
             if (dup is not null)
             {
-                planned.Add(baseEntry with { Status = PlannedEntry.StatusDuplicate, Note = $"already logged (entry {dup.Id})", ExistingEntryId = dup.Id });
+                planned.Add(baseEntry with { Status = PlannedEntry.StatusDuplicate, Note = dup.Reason, ExistingEntryId = dup.EntryId });
                 continue;
             }
 
-            // Another proposed entry in this same batch already claims this sourceUid.
-            if (!plannedMarkers.Add(marker))
+            // Another proposed entry in this same batch already claims this sourceUid or this slot.
+            var fingerprint = EntryFingerprint.TryFor(input.Start, input.DurationSeconds, projectId);
+            if (!claimedUids.Add(input.SourceUid))
             {
                 planned.Add(baseEntry with { Status = PlannedEntry.StatusDuplicate, Note = "duplicate of another proposed entry with the same sourceUid" });
+                continue;
+            }
+            if (fingerprint is not null && !claimedFingerprints.Add(fingerprint))
+            {
+                planned.Add(baseEntry with { Status = PlannedEntry.StatusDuplicate, Note = "duplicate of another proposed entry with the same start, length and project" });
                 continue;
             }
 

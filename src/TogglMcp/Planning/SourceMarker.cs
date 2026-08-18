@@ -1,12 +1,14 @@
 namespace TogglMcp.Planning;
 
 /// <summary>
-/// The dedup marker embedded in a time entry's description (`⟨sourceUid⟩`). Module-shared
-/// because two slices depend on it — PlanWeek writes/dedups against it and CommitPlan
-/// re-checks it. Kept here rather than duplicated so the two slices don't couple sideways.
+/// The legacy dedup marker (`⟨sourceUid⟩`) that entries written before the ledger existed still
+/// carry in their description. READ-ONLY: nothing appends it any more — descriptions are written
+/// exactly as the user approves them, and identity lives in <see cref="ILedgerStore"/> and
+/// <see cref="EntryFingerprint"/>. Kept so re-planning a week logged under the old scheme still
+/// recognises those entries instead of duplicating them.
 /// </summary>
 public static class SourceMarker
 {
-    /// <summary>Wraps a source uid in the ⟨…⟩ marker exactly as it is embedded in a description, so writers and dedup scanners agree on one format.</summary>
+    /// <summary>Rebuilds the ⟨…⟩ marker for a source uid, to look for it in an existing description.</summary>
     public static string For(string sourceUid) => $"⟨{sourceUid}⟩";
 }

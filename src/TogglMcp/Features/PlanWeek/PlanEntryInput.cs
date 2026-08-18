@@ -12,7 +12,7 @@ public sealed record PlanEntryInput
     // Rejected unless > 0 (see PlanWeekHandler shape check).
     [Description("Duration in seconds, positive.")]
     public long DurationSeconds { get; init; }
-    // The idempotency key: becomes the ⟨sourceUid⟩ dedup marker in the description so the
+    // The idempotency key: recorded in the ledger against the Toggl entry it becomes, so the
     // same work is never logged twice across plan/commit runs. Required.
     [Description("REQUIRED stable id of the source record for idempotency, e.g. 'calevt:AB12' or 'gitsha:9f3c'.")]
     public string SourceUid { get; init; } = "";

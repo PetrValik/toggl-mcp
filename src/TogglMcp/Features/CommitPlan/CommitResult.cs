@@ -1,7 +1,7 @@
 namespace TogglMcp.Features.CommitPlan;
 
 /// <summary>Per-entry outcome of a commit: how one planned entry fared against Toggl.</summary>
-/// <param name="SourceUid">Stable id of the planned entry (ties back to the plan and its dedup marker).</param>
+/// <param name="SourceUid">Stable id of the planned entry (ties back to the plan and to the ledger record written for it).</param>
 /// <param name="Status">One of "created" | "duplicate" | "skipped" | "error".</param>
 /// <param name="Message">Human/model-facing detail (e.g. the created entry id, or why it was skipped).</param>
 /// <param name="EntryId">Toggl time-entry id when known (on create, or the pre-existing duplicate); null otherwise.</param>

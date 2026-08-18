@@ -159,9 +159,14 @@ Claude discovers the Authentik authorization server automatically.
 ## Gotchas baked into the code (don't undo them)
 
 - **Toggl Basic auth field order:** token is the *username*, literal `api_token` the password.
-- **Idempotency:** Toggl has no idempotency key — entries embed `⟨sourceUid⟩` in the
-  description; `plan_week` and `commit_plan` both dedup against it (and re-check at commit).
-  `sourceUid` is required, so re-running a plan never duplicates.
+- **Idempotency:** Toggl has no idempotency key, and **nothing is ever appended to a
+  description** — an entry reads exactly as the user approved it. Instead the server keeps a
+  per-user ledger (`{STORAGE__DATADIR}/ledger/`) of `sourceUid → Toggl entry id`, and falls back
+  to matching an entry's own content (start instant + duration + project). `plan_week` and
+  `commit_plan` share one `DuplicateFinder` so they can't disagree, and commit re-checks at write
+  time. A ledger record whose entry no longer exists in Toggl is ignored, so deleting an entry
+  lets it be written again. Entries written before 2026-08-18 still carry the old `⟨sourceUid⟩`
+  marker; it is still *read* for dedup, never written.
 - **Lock:** never write past Friday 23:59 (Europe/Prague) — locked weeks are refused, not
   attempted. Only the admin can reopen a week.
 - **DST:** `start` is passed through verbatim as RFC3339 with the source's own offset —

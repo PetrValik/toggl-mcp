@@ -1,16 +1,16 @@
 namespace TogglMcp.Planning;
 
 /// <summary>
-/// One resolved entry inside a frozen plan. <see cref="Description"/> already
-/// includes the <c>⟨sourceUid⟩</c> dedup marker, so commit is a verbatim replay.
+/// One resolved entry inside a frozen plan. <see cref="Description"/> is exactly what the user
+/// approved in the preview, so commit is a verbatim replay of it.
 /// </summary>
 public sealed record PlannedEntry
 {
     // Calendar day this entry lands on (source-local date).
     public required DateOnly Day { get; init; }
-    // Stable id of the originating source item; the value wrapped by the ⟨…⟩ dedup marker.
+    // Stable id of the originating source item; the dedup key recorded in the ledger on commit.
     public required string SourceUid { get; init; }
-    /// <summary>Final description as it will be written (marker included).</summary>
+    /// <summary>Final description as it will be written — the user's words, nothing appended.</summary>
     public required string Description { get; init; }
     /// <summary>RFC3339 with the source's own offset.</summary>
     public required string Start { get; init; }

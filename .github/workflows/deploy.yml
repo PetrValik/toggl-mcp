@@ -18,7 +18,19 @@ env:
   DEPLOY_PATH: /opt/toggl-mcp
 
 jobs:
+  # Gate the rollout on the test suite. Back-fill writes to an official timesheet, so a broken
+  # dedup must never reach the box that holds the live Toggl token.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet test TogglMcp.slnx --configuration Release
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -11,7 +11,7 @@ namespace TogglMcp.Features.CommitPlan;
 
 /// <summary>
 /// The only logic layer of the commit_plan slice: replays a frozen <see cref="WeekPlan"/>'s "new"
-/// entries into Toggl, re-checking the week lock and deduping (marker-based) at write time. Sealed
+/// entries into Toggl, re-checking the week lock and deduping at write time. Sealed
 /// and internal — reachable only through <see cref="CommitPlanTool"/>.
 /// </summary>
 internal sealed class CommitPlanHandler(
@@ -19,6 +19,7 @@ internal sealed class CommitPlanHandler(
     ITogglTokenProvider tokens,
     WeekLockPolicy locks,
     IPlanStore plans,
+    ILedgerStore ledger,
     IOptions<TogglOptions> togglOptions)
 {
     // Per-user commit gate: serialises a user's commit_plan calls so concurrent/retried ones can't
@@ -49,16 +50,28 @@ internal sealed class CommitPlanHandler(
         var results = new List<CommitEntryResult>();
         int created = 0, skipped = 0, failed = 0;
 
+        // Nothing left to write (everything excluded, or the plan held no new entries): don't take
+        // the gate or call Toggl at all.
+        if (toWrite.Count == 0)
+            return new CommitResult(planId, 0, 0, 0, [], SummaryOf(plan, excludeSet, 0, 0, 0));
+
         // Serialise this user's commits so concurrent/retried calls can't both write
-        // (Toggl has no idempotency key; a marker re-check alone can't close a TOCTOU race).
+        // (Toggl has no idempotency key; a dedup re-check alone can't close a TOCTOU race).
         var gate = CommitLocks.GetOrAdd(tokens.UserKey, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken);
         try
         {
             var wid = await toggl.GetWorkspaceIdAsync(cancellationToken);
-            // One existing-entries fetch per day, reused across entries sharing that day.
-            var dayCache = new Dictionary<DateOnly, IReadOnlyList<TogglTimeEntry>>();
-            var writtenMarkers = new HashSet<string>(StringComparer.Ordinal); // markers created in this run
+
+            // One read of the truth for the whole run: Toggl's entries across the days being
+            // written, plus what this server remembers writing. Widened ±1 day because Toggl may
+            // bucket by UTC, so an entry starting 00:00–02:00 Europe/Prague sits on the previous
+            // UTC date; identity matching keeps the wider window false-positive-free.
+            var minDay = toWrite.Min(e => e.Day);
+            var maxDay = toWrite.Max(e => e.Day);
+            var existing = await toggl.GetTimeEntriesAsync(minDay.AddDays(-1), maxDay.AddDays(2), cancellationToken);
+            var recorded = await ledger.GetAsync(tokens.UserKey, minDay.AddDays(-1), maxDay.AddDays(1), cancellationToken);
+            var duplicates = new DuplicateFinder(existing, recorded);
 
             foreach (var entry in toWrite)
             {
@@ -70,31 +83,13 @@ internal sealed class CommitPlanHandler(
                     continue;
                 }
 
-                var marker = SourceMarker.For(entry.SourceUid);
-
-                // Re-dedup against Toggl (one fetch per day, cached) — catches a re-commit after
-                // the entries already landed. Fetch ±1 day around the local day: Toggl's
-                // start_date/end_date filtering may bucket by UTC, so an entry starting
-                // 00:00–02:00 Europe/Prague would fall on the previous UTC date and escape an
-                // exact-day window. The marker match makes the wider window false-positive-free.
-                if (!dayCache.TryGetValue(entry.Day, out var dayEntries))
-                {
-                    dayEntries = await toggl.GetTimeEntriesAsync(entry.Day.AddDays(-1), entry.Day.AddDays(2), cancellationToken);
-                    dayCache[entry.Day] = dayEntries;
-                }
-                var dup = dayEntries.FirstOrDefault(x => x.Description?.Contains(marker, StringComparison.Ordinal) == true);
+                // Re-dedup immediately before writing — catches a re-commit after the entries
+                // already landed, an entry logged by hand in the meantime, and anything this run
+                // wrote a moment ago (the fetched list is a pre-write snapshot).
+                var dup = duplicates.Find(entry.SourceUid, entry.Start, entry.DurationSeconds, entry.ProjectId);
                 if (dup is not null)
                 {
-                    results.Add(new CommitEntryResult(entry.SourceUid, "duplicate", $"already logged (entry {dup.Id})", dup.Id));
-                    skipped++;
-                    continue;
-                }
-
-                // Same marker already written earlier in THIS run (the cached day list is a
-                // pre-write snapshot, so it wouldn't show it).
-                if (!writtenMarkers.Add(marker))
-                {
-                    results.Add(new CommitEntryResult(entry.SourceUid, "duplicate", "already written in this commit run", null));
+                    results.Add(new CommitEntryResult(entry.SourceUid, "duplicate", dup.Reason, dup.EntryId));
                     skipped++;
                     continue;
                 }
@@ -113,12 +108,25 @@ internal sealed class CommitPlanHandler(
                         TaskId = entry.TaskId,
                         Tags = entry.Tags is { Count: > 0 } ? entry.Tags : null,
                     }, cancellationToken);
-                    results.Add(new CommitEntryResult(entry.SourceUid, "created", $"entry {written.Id} on {entry.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}", written.Id));
+                    // It exists now: nothing later in this run may write it again...
+                    duplicates.Remember(entry.SourceUid, written.Id, entry.Start, entry.DurationSeconds, entry.ProjectId);
+                    // ...and no later run may either. The entry is already in Toggl by this point,
+                    // so a ledger that can't be written is degraded, not fatal: content matching
+                    // still finds the entry. Report the create, say what was lost, keep going.
+                    var ledgerNote = "";
+                    try
+                    {
+                        await ledger.RecordAsync(tokens.UserKey, entry.SourceUid, written.Id, entry.Day, cancellationToken);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        ledgerNote = "; not recorded in the ledger — dedup falls back to matching on content";
+                    }
+                    results.Add(new CommitEntryResult(entry.SourceUid, "created", $"entry {written.Id} on {entry.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}{ledgerNote}", written.Id));
                     created++;
                 }
                 catch (TogglException ex)
                 {
-                    writtenMarkers.Remove(marker); // write failed — don't block a genuine retry
                     results.Add(new CommitEntryResult(entry.SourceUid, "error", ex.Message, null));
                     failed++;
                 }
@@ -129,10 +137,14 @@ internal sealed class CommitPlanHandler(
             gate.Release();
         }
 
-        // Count entries the user deliberately excluded (only "new" ones could have been written)
-        // so the summary can distinguish "skipped by us" from "excluded by you".
+        return new CommitResult(planId, created, skipped, failed, results, SummaryOf(plan, excludeSet, created, skipped, failed));
+    }
+
+    // Counts entries the user deliberately excluded (only "new" ones could have been written) so
+    // the summary can distinguish "skipped by us" from "excluded by you".
+    private static string SummaryOf(WeekPlan plan, HashSet<string> excludeSet, int created, int skipped, int failed)
+    {
         var excluded = plan.Entries.Count(e => e.Status == PlannedEntry.StatusNew && excludeSet.Contains(e.SourceUid));
-        var summary = $"Committed {created}, skipped {skipped}, failed {failed}" + (excluded > 0 ? $"; {excluded} excluded by you." : ".");
-        return new CommitResult(planId, created, skipped, failed, results, summary);
+        return $"Committed {created}, skipped {skipped}, failed {failed}" + (excluded > 0 ? $"; {excluded} excluded by you." : ".");
     }
 }

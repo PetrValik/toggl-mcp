@@ -7,6 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The slices' handlers are `internal sealed` on purpose (reachable only through their
+         MCP tool). The test project needs to drive them directly, so it — and only it — sees them. -->
+    <InternalsVisibleTo Include="TogglMcp.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.9" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.4.1" />
   </ItemGroup>

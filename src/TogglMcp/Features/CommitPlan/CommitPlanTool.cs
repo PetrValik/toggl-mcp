@@ -28,9 +28,10 @@ public static class CommitPlanTool
         ITogglTokenProvider tokens,
         WeekLockPolicy locks,
         IPlanStore plans,
+        ILedgerStore ledger,
         IOptions<TogglOptions> togglOptions,
         [Description("planId returned by plan_week.")] string planId,
         [Description("Optional sourceUids to skip (e.g. days the user decided not to log).")] string[]? exclude = null,
         CancellationToken cancellationToken = default)
-        => new CommitPlanHandler(toggl, tokens, locks, plans, togglOptions).HandleAsync(planId, exclude, cancellationToken);
+        => new CommitPlanHandler(toggl, tokens, locks, plans, ledger, togglOptions).HandleAsync(planId, exclude, cancellationToken);
 }

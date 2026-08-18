@@ -30,6 +30,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<TogglThrottle>();
 builder.Services.AddSingleton<WeekLockPolicy>();
 builder.Services.AddSingleton<IPlanStore, InMemoryPlanStore>();             // ephemeral frozen plans (plan_week → commit_plan)
+builder.Services.AddSingleton<ILedgerStore, FileLedgerStore>();            // durable "we already wrote this" record — replaces the old in-description marker
 builder.Services.AddScoped<ITogglTokenProvider, EnvTogglTokenProvider>();   // Phase 3: swap for the vault-backed provider
 builder.Services.AddSingleton<IMappingRuleStore, FileMappingRuleStore>();
 builder.Services.AddHttpClient<ITogglClient, TogglClient>(c =>

@@ -4,6 +4,12 @@ How the model turns a day's activity notes into a reviewed set of Toggl entries.
 "brain" of the tool — the part that saves the time you'd otherwise spend *writing up* what you
 did. The server just validates and writes what you approve (`plan_week` → `commit_plan`).
 
+> **This page is the human explanation — the *why*, plus prompts to paste.** The model-facing
+> version of the same method is the `toggl-timelog` skill in the
+> [claude-kit](https://github.com/PetrValik/Claude-kit) `kit-timelog` plugin (with the `/timelog`
+> command). That skill is canonical for how Claude behaves; keep the two in step when the method
+> changes, and change the skill first.
+
 ## Scope: one day back (default), or more
 
 **Default = a single day, one day back** (yesterday's working day) — the everyday case: a quick
