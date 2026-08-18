@@ -1,6 +1,7 @@
 # claude-kit profile — toggl-mcp
 # A Toggl <-> Claude MCP server. NOTE: this is an MCP tool server, not an HTTP/EF web
-# API, so the vsa_dotnet pack is applied in adapted form (see packs.vsa_dotnet.notes).
+# API, so the vsa_dotnet pack is applied in adapted form. The adapted rule-set is this
+# repo's own skill: .claude/skills/mcp-slice-architecture/ (gated via skill_routes below).
 
 project:
   name: toggl-mcp
@@ -10,6 +11,11 @@ project:
 build:
   build: "dotnet build src/TogglMcp/TogglMcp.csproj"
   test: "dotnet test TogglMcp.slnx"
+
+# The first edit under Features/ is denied until this repo's own slice rule-set has been
+# invoked. One row: it is the only rule-set that shapes the code here.
+skill_routes:
+  - { glob: "src/TogglMcp/Features/**", skill: mcp-slice-architecture, why: "a slice here is one MCP tool, not a web endpoint" }
 
 git:
   default_branch: main
@@ -24,11 +30,6 @@ packs:
       multi_tenant: false                 # no tenant accessor / global query filter
       outbox: false                       # no outbox table / SaveChanges interceptor
     notes: >
-      Adapted VSA for an MCP tool server. A slice = one MCP tool (use case) under
-      Features/{VerbNoun}/. The [McpServerTool] method is the thin "endpoint" (bind args
-      -> call handler -> return); the internal sealed Handler is the only logic layer;
-      request/response are slice-local records. There is NO MediatR / FluentValidation /
-      DbContext / Result<T> / Minimal-API endpoint here (no HTTP pipeline or database).
-      Module-shared infrastructure = ITogglClient, WeekLockPolicy, IPlanStore,
-      IMappingRuleStore, ITogglTokenProvider, and the shared ProjectDto contract.
-      Cross-slice coupling is still banned; slices share only via that infrastructure.
+      Adapted VSA for an MCP tool server. The rule-set moved to this repo's own skill,
+      .claude/skills/mcp-slice-architecture/ — a profile note is a value field no routing
+      mechanism can load. Read the skill; do not restate it here.
