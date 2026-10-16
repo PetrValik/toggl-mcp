@@ -202,7 +202,7 @@ internal sealed class PlanWeekHandler(
             ? $"Nothing to write ({dupCount} already logged, {blocked} blocked). No plan created."
             : $"{newCount} entr{(newCount == 1 ? "y" : "ies")} ready — review, then commit_plan(\"{planId}\"). {dupCount} duplicate, {blocked} blocked.";
 
-        return new PlanResult(planId, weekStart.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), lockInfo.IsLocked, WeekLockPolicy.FormatDeadline(lockInfo.LocksAt),
+        return new PlanResult(planId, weekStart.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), lockInfo.IsLocked, locks.DeadlineOf(lockInfo),
             newCount, dupCount, blocked, planned.Select(ToDto).ToList(), summary);
     }
 

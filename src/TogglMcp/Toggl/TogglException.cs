@@ -1,12 +1,14 @@
 using System.Net;
+using ModelContextProtocol;
 
 namespace TogglMcp.Toggl;
 
 /// <summary>
 /// Raised when the Toggl API returns a non-success status the client cannot
-/// recover from (after retries). Never carries the API token.
+/// recover from (after retries). Never carries the API token. An <see cref="McpException"/>, so
+/// the message (status + Toggl's own error text) reaches the model instead of a generic failure.
 /// </summary>
-public sealed class TogglException(HttpStatusCode status, string message) : Exception(message)
+public sealed class TogglException(HttpStatusCode status, string message) : McpException(message)
 {
     /// <summary>The HTTP status the API returned; lets handlers branch without parsing the message.</summary>
     public HttpStatusCode Status { get; } = status;

@@ -31,11 +31,12 @@ public sealed class WeekLockPolicy
     public WeekLockPolicy(IOptions<LockOptions> options, TimeProvider clock)
         : this(options.Value, clock) { }
 
-    /// <summary>Core ctor: resolves the configured time zone once, degrading to UTC rather than throwing on a bad zone id (so a misconfig never crashes the server).</summary>
+    /// <summary>Core ctor: resolves the configured time zone once (blank = the machine's own), degrading to UTC rather than throwing on a bad zone id (so a misconfig never crashes the server).</summary>
     public WeekLockPolicy(LockOptions options, TimeProvider clock)
     {
         _o = options;
         _clock = clock;
+        if (string.IsNullOrWhiteSpace(_o.TimeZone)) { _tz = TimeZoneInfo.Local; return; }
         try { _tz = TimeZoneInfo.FindSystemTimeZoneById(_o.TimeZone); }
         catch (TimeZoneNotFoundException) { _tz = TimeZoneInfo.Utc; }
         catch (InvalidTimeZoneException) { _tz = TimeZoneInfo.Utc; }
@@ -92,4 +93,11 @@ public sealed class WeekLockPolicy
     /// </summary>
     public static string FormatDeadline(DateTimeOffset dto) =>
         dto.ToString("yyyy-MM-dd HH:mm zzz", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The deadline to report for a week, or null when locking is off — there is no deadline then,
+    /// and a reported one would be repeated to the user as if it were real. Module-shared so
+    /// week_status and plan_week agree.
+    /// </summary>
+    public string? DeadlineOf(WeekLockInfo info) => _o.Enabled ? FormatDeadline(info.LocksAt) : null;
 }

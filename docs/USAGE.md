@@ -25,17 +25,22 @@ lands in Toggl is always exactly what you saw in the preview.
 
 ---
 
-## Prerequisites
+## Before you start
 
-Either:
+You need a Toggl Track API token (Profile settings → API Token, the raw account token) and one
+of two ways to connect an MCP client:
 
-- **Connected in Claude** — a custom connector at `https://toggl.irminsul.uk/mcp`, OAuth
-  logged-in. Nothing runs on your machine. (See README → *Connect in Claude*.) — or —
-- **Running locally** — `dotnet run` in `src/TogglMcp` with `TOGGL__APITOKEN` set and
-  `AUTH__ENABLED=false`, then point an MCP client at `http://localhost:<port>/mcp`.
-  (See README → *Run Phase 1 locally*.)
+- **Local stdio (recommended).** Install the `toggl-mcp` tool and let your MCP client launch it
+  with `--stdio`. The token goes in the client's `env` block on your own machine, for example
+  `claude mcp add toggl -e TOGGL__APITOKEN=<your-token> -- toggl-mcp --stdio`. There is no HTTP
+  endpoint and no login. On Claude Desktop use the absolute path to `toggl-mcp`, because GUI
+  apps do not inherit your shell `PATH`. See the README for the install commands and the
+  Claude Desktop config.
+- **Hosted URL.** Run the server in HTTP mode (the default when `--stdio` is absent) behind an
+  OIDC provider and add `https://toggl-mcp.example.com/mcp` as a custom connector, logging in
+  with OAuth. Setup is in [`deploy/DEPLOY.md`](../deploy/DEPLOY.md).
 
-Once connected, you just talk to Claude in natural language — Claude picks the tools.
+Once connected, you just talk to Claude in natural language, and Claude picks the tools.
 The examples below show the underlying calls so you know what to expect.
 
 ---
@@ -47,7 +52,8 @@ The examples below show the underlying calls so you know what to expect.
 > **You:** "What's still missing in my Toggl for last week?"
 
 Claude calls `week_status(weekOf: "2026-07-13")` (any date in the target week; omit for
-the current week). You get back the per-day picture and, crucially, the **lock deadline**:
+the current week). You get back the per-day picture and, if your workspace locks weeks (`LOCK__ENABLED=true`), the
+**lock deadline**; with the lock off, `locksAt` is null:
 
 ```jsonc
 {
@@ -133,7 +139,7 @@ lock and dedup at write time:
 {
   "planId": "3f9a…", "created": 1, "skipped": 0, "failed": 0,
   "results": [
-    { "sourceUid": "calevt:AB12", "status": "created", "message": "entry 33e1 on 2026-07-14", "entryId": 33e1 }
+    { "sourceUid": "calevt:AB12", "status": "created", "message": "entry 3561234 on 2026-07-14", "entryId": 3561234 }
   ],
   "summary": "Committed 1, skipped 0, failed 0; 1 excluded by you."
 }
@@ -151,7 +157,7 @@ into a one-time decision.
 **`suggest_project(calendarName, title)`** — asks the server for a project guess:
 
 ```jsonc
-suggest_project(calendarName: "Team Standup", title: "Daily sync")
+suggest_project(calendarName: "Team Standup", title: "Daily sync")   // values illustrative
 // → { "matched": false, "projectId": 178, "projectName": "Website", "confidence": 0.42,
 //     "reason": "Best guess by name similarity (42%); confirm with the user before logging.",
 //     "candidates": [ …top 3… ] }
@@ -167,8 +173,10 @@ add_mapping_rule(keyword: "standup", projectId: 178)
 // → { "ok": true, "message": "Rule saved: 'standup' -> Website.", … }
 ```
 
-Now any future source text containing "standup" resolves to *Website* automatically. Rules
-are per-user and stored as JSON under `STORAGE__DATADIR`; a new rule for an existing
+Now `suggest_project` returns *Website* as a matched rule for any source text containing
+"standup". `plan_week` does not read rules itself; the model calls `suggest_project` to pick the
+project before it proposes entries. Rules
+are stored as JSON under `STORAGE__DATADIR`; a new rule for an existing
 keyword replaces it.
 
 ---
@@ -182,24 +190,39 @@ keyword replaces it.
 | `list_entries(from?, to?)` | see what's already logged before proposing | `[{ id, description, start, durationSeconds, projectId, projectName, taskId, tags }]` |
 
 `list_entries` dates are inclusive `YYYY-MM-DD` and default to the **last 7 days**,
-anchored on *today in the lock time zone* (Europe/Prague) — the same "today" the
-planning tools use, so the windows always agree.
+anchored on *today in the configured time zone* (`LOCK__TIMEZONE`, blank = the machine's) — the
+same "today" the planning tools use, so the windows always agree.
 
 ---
 
 ## The lock rule (why a day gets refused)
 
-Weeks lock **permanently at Friday 23:59 Europe/Prague**: each Friday the *previous* week
-closes and can never be edited again. Only the workspace admin can reopen a week.
+The lock is **opt-in**. It mirrors a workspace where an admin permanently locks old weeks, and
+it is off unless you set `LOCK__ENABLED=true`. With it off, the server does not refuse anything
+on its own (Toggl itself still can).
 
-- The editable window is **the current week + last week**; older weeks are locked.
-- The tools compute this themselves. A locked day is **refused, never attempted** — you'll
-  see `status: "locked"` in a plan, or a `skipped` result at commit, with a message telling
-  you to contact the admin. It is never a silent failure.
-- `week_status.locksAt` / `plan_week.locksAt` tell you exactly when your window closes, so
-  you know how long you have to back-fill.
+With it on, a week closes permanently at a configured moment and can never be edited again by
+this server; only your workspace admin can reopen it in Toggl. All of it is configurable:
 
-Lock timing is configurable via the `Lock` section (`LOCK__…` env) — see README.
+| Setting | Default | Meaning |
+|---|---|---|
+| `LOCK__CLOSEDAYOFWEEK` | `Friday` | day the close happens |
+| `LOCK__CLOSETIME` | `23:59:00` | time of day the close happens |
+| `LOCK__GRACEWEEKS` | `1` | a week locks on the close day of the week that many weeks later |
+| `LOCK__TIMEZONE` | blank | IANA id such as `Europe/Prague`; blank = the machine's own time zone |
+| `LOCK__ADMINCONTACT` | `your workspace admin` | who the refusal message tells you to ask |
+
+With the defaults, each Friday 23:59 the *previous* week closes, so the editable window is the
+current week plus last week.
+
+- The tools compute this themselves. A locked day is **refused, never attempted**: you'll see
+  `status: "locked"` in a plan, or a `skipped` result at commit, with a message naming the
+  configured contact. It is never a silent failure.
+- `week_status.locksAt` / `plan_week.locksAt` tell you exactly when a week's window closes, so
+  you know how long you have to back-fill. Both are null when the lock is off.
+
+`LOCK__TIMEZONE` also defines day and week boundaries for `week_status` and `plan_week` when the
+lock is off. Set it explicitly in containers, which run in UTC.
 
 ---
 
@@ -228,7 +251,8 @@ plan. Practical consequences:
 - **Always give each source record a stable `sourceUid`** (`calevt:<id>`, `gitsha:<sha>`,
   `note:<uid>`…). It's required precisely so this guarantee holds.
 - **`start` must be RFC3339 with a real offset** (`…+02:00`, not bare local time). The
-  offset is passed through verbatim; the day/week it counts for is computed in Europe/Prague.
+  offset is passed through verbatim; the day/week it counts for is computed in the configured
+  time zone (`LOCK__TIMEZONE`, blank = the machine's).
 
 ---
 
@@ -236,14 +260,22 @@ plan. Practical consequences:
 
 | Symptom | Likely cause / fix |
 |---|---|
-| Entry shows `status: "invalid"` — "start must be RFC3339 with an explicit offset" | `start` lacks an offset. Use `2026-07-14T09:00:00+02:00`, not `2026-07-14T09:00:00`. |
+| Entry shows `status: "invalid"` — "start '…' must be RFC3339 with an explicit offset" | `start` lacks an offset. Use `2026-07-14T09:00:00+02:00`, not `2026-07-14T09:00:00`. |
 | `status: "invalid"` — "sourceUid is required" | Every proposed entry needs a stable `sourceUid`. |
-| `status: "locked"` / commit `skipped` — "ask the admin to reopen" | The week is past the Friday 23:59 lock. Only the workspace admin can reopen it. |
+| `status: "locked"` / commit `skipped` — "ask … to reopen it" | The week is past its configured lock time (only with `LOCK__ENABLED=true`). Only the workspace admin can reopen it in Toggl. |
 | `plan_week` says `duplicate` for something not in Toggl | Two proposed entries share a `sourceUid`, or share the same start/duration/project. Give distinct ids and non-overlapping times. |
 | "project '…' not found" | `projectName` didn't match. Call `list_projects` and pass the exact `projectId`. |
+| `commit_plan` says "Plan not found or expired — run plan_week again." | Plans live in memory for 30 minutes and are dropped when the server restarts (a stdio server restarts with the client). Run `plan_week` again and approve the new preview. |
+| "Too many entries" or "outside the supported ±366-day window" | `plan_week` takes at most 200 entries per call, dated within a year of today. Split a large back-fill into weeks. |
 | Nothing writes, `planId` is null | The plan had no `new` entries (all duplicate/blocked/invalid). Nothing to commit. |
-| Connector won't authenticate | Auth/Authentik setup — see README → *Authentik setup checklist*. |
+| Hosted connector won't authenticate (401, or the client can't discover the login) | Check that `AUTH__AUTHORITY` is your OIDC issuer and that `AUTH__RESOURCEURL` byte-matches the public MCP URL, because that exact string must be in the token's `aud` claim and in the Protected Resource Metadata. The provider must sign RS256 with a JWKS. See [`deploy/DEPLOY.md`](../deploy/DEPLOY.md). |
+| Hosted connector logs in, then every call is 401/403 | Usually an `aud` mismatch (the provider ignores the RFC 8707 `resource` parameter and issues `aud` = client id, as Google does), a missing `AUTH__REQUIREDSCOPE` scope, or a `sub` not in `AUTH__ALLOWEDSUBJECTS__0..`. Decode the access token and compare. See [`deploy/DEPLOY.md`](../deploy/DEPLOY.md). |
+| Server refuses to start with auth off | Auth may only be disabled in the Development environment (`dotnet run` is Development). Otherwise leave `AUTH__ENABLED=true`. |
+| Client shows no tools, or the server exits at once (stdio) | The client could not start the command. On Claude Desktop use the absolute path to `toggl-mcp` (for example `/Users/you/.dotnet/tools/toggl-mcp`), and check that the .NET 10 runtime is installed. The server's own log goes to stderr, which the client keeps in its MCP log. |
+| A tool call fails with "No Toggl token configured" | The client's `env` block does not set `TOGGL__APITOKEN`. The server starts and lists tools without a token; it only needs one when it calls Toggl. |
+| A tool call fails with "Toggl API returned 401 Unauthorized" (or 403) | Toggl rejected the token: it was mistyped, reset in Toggl, or is a `toggl_sk_` key instead of the raw account token from Profile settings. |
+| Garbled or failed handshake (stdio) | Something wrote to stdout, which is the protocol channel. Logs go to stderr. This only happens in a fork that adds `Console.WriteLine` or similar; switch it to stderr or the logger. |
 
 **Never** paste your Toggl token into chat: the token is only ever read from
-env/config (or the Phase 3 vault) and is **never** accepted as a tool argument — MCP
+env/config (a per-user vault was planned as Phase 3 but never built) and is **never** accepted as a tool argument — MCP
 forbids token passthrough because tool args transit the model.

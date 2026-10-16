@@ -10,7 +10,7 @@ namespace TogglMcp.Toggl;
 /// leave at most one per <see cref="TogglOptions.MinRequestIntervalMs"/>.
 /// Singleton. (A single global bucket is conservative once multiple users share
 /// the server — each Toggl token has its own bucket — but it can never *over*-send.
-/// Per-token buckets are a Phase 3 refinement.)
+/// Per-token buckets would be a refinement of the unbuilt Phase 3.)
 /// </summary>
 public sealed class TogglThrottle(IOptions<TogglOptions> options)
 {

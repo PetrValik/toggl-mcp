@@ -6,6 +6,19 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- `dotnet pack` produces a .NET tool, so a local install is one command and the MCP client
+         launches `toggl-mcp` in stdio mode. Not published to NuGet; install from your own build. -->
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>toggl-mcp</ToolCommandName>
+    <PackageId>TogglMcp</PackageId>
+    <Version>0.1.0</Version>
+    <Description>MCP server that back-fills a Toggl Track timesheet from a plan you approve: read, propose, confirm, write.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/PetrValik/toggl-mcp</RepositoryUrl>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- The slices' handlers are `internal sealed` on purpose (reachable only through their
          MCP tool). The test project needs to drive them directly, so it — and only it — sees them. -->

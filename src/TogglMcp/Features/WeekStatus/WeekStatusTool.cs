@@ -17,7 +17,7 @@ public static class WeekStatusTool
     /// <param name="weekOf">Any date in the target week (YYYY-MM-DD); null defaults to the current week.</param>
     [McpServerTool(Name = "week_status", ReadOnly = true, Idempotent = true, OpenWorld = true),
      Description(
-        "Show, for a week (default the current week), which working days are empty vs already filled in Toggl, plus the lock deadline (when the week closes permanently). Use this first to see what still needs back-filling before proposing entries with plan_week.")]
+        "Show, for a week (default the current week), which working days are empty vs already filled in Toggl, plus the lock deadline (when the week closes permanently) if the workspace locks weeks; locksAt is null when it does not. Use this first to see what still needs back-filling before proposing entries with plan_week.")]
     public static Task<WeekStatusResult> WeekStatus(
         ITogglClient toggl,
         WeekLockPolicy locks,

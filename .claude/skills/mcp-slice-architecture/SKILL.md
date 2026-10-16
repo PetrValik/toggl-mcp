@@ -101,7 +101,8 @@ nothing else may create a time entry.
 - **The week lock is re-checked at write time**, not just at plan time. A week can close between
   the two.
 - `start` is RFC3339 **with an explicit offset**, passed through verbatim; which day and week an
-  entry counts for is computed in Europe/Prague.
+  entry counts for is computed in the configured time zone
+  (`LOCK__TIMEZONE`, blank = the machine's), not from the UTC date.
 
 ## Tests
 
