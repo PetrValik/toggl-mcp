@@ -33,8 +33,8 @@ export TOGGL__APITOKEN="<your-toggl-api-token>"
 dotnet run --project src/TogglMcp
 ```
 
-`dotnet run` uses the Development environment, in which auth is off, so `/mcp` is open. Keep
-it on localhost. Outside Development the app refuses to start with `AUTH__ENABLED=false`.
+`dotnet run` uses the Development environment and listens on `http://localhost:5252`
+(`Properties/launchSettings.json`). Auth is off there, so `/mcp` is open. Keep it on localhost. Outside Development the app refuses to start with `AUTH__ENABLED=false`.
 
 To try stdio mode, point an MCP client at the installed `toggl-mcp --stdio`, or at the built
 assembly: `dotnet src/TogglMcp/bin/Debug/net10.0/TogglMcp.dll --stdio`. Not at `dotnet run`: it

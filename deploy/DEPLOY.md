@@ -65,7 +65,8 @@ Add `https://toggl-mcp.example.com/mcp` as a remote MCP server in your client. I
 provider through `/.well-known/oauth-protected-resource` and logs you in.
 
 ## Notes
-- The mapping rules and commit ledger live in the `toggl-mcp-data` volume (`/data`). Losing it is
+- The mapping rules and commit ledger live in the `toggl-mcp-data` volume (`/data`; compose prefixes it with the project name, e.g.
+  `toggl-mcp_toggl-mcp-data`). Losing it is
   not fatal, but the server forgets what it already wrote and dedup falls back to content matching.
 - The app refuses to start with `AUTH__ENABLED=false` outside the Development environment.
 - Every tool call uses the one token in `TOGGL__APITOKEN`. Per-user tokens were planned (roadmap

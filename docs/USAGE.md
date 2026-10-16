@@ -52,7 +52,8 @@ The examples below show the underlying calls so you know what to expect.
 > **You:** "What's still missing in my Toggl for last week?"
 
 Claude calls `week_status(weekOf: "2026-07-13")` (any date in the target week; omit for
-the current week). You get back the per-day picture and, crucially, the **lock deadline**:
+the current week). You get back the per-day picture and, if your workspace locks weeks (`LOCK__ENABLED=true`), the
+**lock deadline**; with the lock off, `locksAt` is null:
 
 ```jsonc
 {
@@ -138,7 +139,7 @@ lock and dedup at write time:
 {
   "planId": "3f9a…", "created": 1, "skipped": 0, "failed": 0,
   "results": [
-    { "sourceUid": "calevt:AB12", "status": "created", "message": "entry 33e1 on 2026-07-14", "entryId": 33e1 }
+    { "sourceUid": "calevt:AB12", "status": "created", "message": "entry 3561234 on 2026-07-14", "entryId": 3561234 }
   ],
   "summary": "Committed 1, skipped 0, failed 0; 1 excluded by you."
 }
@@ -156,7 +157,7 @@ into a one-time decision.
 **`suggest_project(calendarName, title)`** — asks the server for a project guess:
 
 ```jsonc
-suggest_project(calendarName: "Team Standup", title: "Daily sync")
+suggest_project(calendarName: "Team Standup", title: "Daily sync")   // values illustrative
 // → { "matched": false, "projectId": 178, "projectName": "Website", "confidence": 0.42,
 //     "reason": "Best guess by name similarity (42%); confirm with the user before logging.",
 //     "candidates": [ …top 3… ] }
@@ -172,7 +173,9 @@ add_mapping_rule(keyword: "standup", projectId: 178)
 // → { "ok": true, "message": "Rule saved: 'standup' -> Website.", … }
 ```
 
-Now any future source text containing "standup" resolves to *Website* automatically. Rules
+Now `suggest_project` returns *Website* as a matched rule for any source text containing
+"standup". `plan_week` does not read rules itself; the model calls `suggest_project` to pick the
+project before it proposes entries. Rules
 are stored as JSON under `STORAGE__DATADIR`; a new rule for an existing
 keyword replaces it.
 
@@ -216,7 +219,7 @@ current week plus last week.
   `status: "locked"` in a plan, or a `skipped` result at commit, with a message naming the
   configured contact. It is never a silent failure.
 - `week_status.locksAt` / `plan_week.locksAt` tell you exactly when a week's window closes, so
-  you know how long you have to back-fill.
+  you know how long you have to back-fill. Both are null when the lock is off.
 
 `LOCK__TIMEZONE` also defines day and week boundaries for `week_status` and `plan_week` when the
 lock is off. Set it explicitly in containers, which run in UTC.
@@ -257,11 +260,13 @@ plan. Practical consequences:
 
 | Symptom | Likely cause / fix |
 |---|---|
-| Entry shows `status: "invalid"` — "start must be RFC3339 with an explicit offset" | `start` lacks an offset. Use `2026-07-14T09:00:00+02:00`, not `2026-07-14T09:00:00`. |
+| Entry shows `status: "invalid"` — "start '…' must be RFC3339 with an explicit offset" | `start` lacks an offset. Use `2026-07-14T09:00:00+02:00`, not `2026-07-14T09:00:00`. |
 | `status: "invalid"` — "sourceUid is required" | Every proposed entry needs a stable `sourceUid`. |
-| `status: "locked"` / commit `skipped` — "ask the admin to reopen" | The week is past its configured lock time (only with `LOCK__ENABLED=true`). Only the workspace admin can reopen it in Toggl. |
+| `status: "locked"` / commit `skipped` — "ask … to reopen it" | The week is past its configured lock time (only with `LOCK__ENABLED=true`). Only the workspace admin can reopen it in Toggl. |
 | `plan_week` says `duplicate` for something not in Toggl | Two proposed entries share a `sourceUid`, or share the same start/duration/project. Give distinct ids and non-overlapping times. |
 | "project '…' not found" | `projectName` didn't match. Call `list_projects` and pass the exact `projectId`. |
+| `commit_plan` says "Plan not found or expired — run plan_week again." | Plans live in memory for 30 minutes and are dropped when the server restarts (a stdio server restarts with the client). Run `plan_week` again and approve the new preview. |
+| "Too many entries" or "outside the supported ±366-day window" | `plan_week` takes at most 200 entries per call, dated within a year of today. Split a large back-fill into weeks. |
 | Nothing writes, `planId` is null | The plan had no `new` entries (all duplicate/blocked/invalid). Nothing to commit. |
 | Hosted connector won't authenticate (401, or the client can't discover the login) | Check that `AUTH__AUTHORITY` is your OIDC issuer and that `AUTH__RESOURCEURL` byte-matches the public MCP URL, because that exact string must be in the token's `aud` claim and in the Protected Resource Metadata. The provider must sign RS256 with a JWKS. See [`deploy/DEPLOY.md`](../deploy/DEPLOY.md). |
 | Hosted connector logs in, then every call is 401/403 | Usually an `aud` mismatch (the provider ignores the RFC 8707 `resource` parameter and issues `aud` = client id, as Google does), a missing `AUTH__REQUIREDSCOPE` scope, or a `sub` not in `AUTH__ALLOWEDSUBJECTS__0..`. Decode the access token and compare. See [`deploy/DEPLOY.md`](../deploy/DEPLOY.md). |

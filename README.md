@@ -71,14 +71,31 @@ Use the absolute path to the command: GUI apps do not inherit your shell `PATH`.
 docker build -t toggl-mcp .
 ```
 
-Then set the client's command to:
+Then let the client run the container. Claude Code:
 
-```
-docker run -i --rm -e TOGGL__APITOKEN -e LOCK__TIMEZONE=Europe/Prague -v toggl-mcp-data:/data toggl-mcp --stdio
+```bash
+claude mcp add toggl -e TOGGL__APITOKEN=<your-token> -- \
+  docker run -i --rm -e TOGGL__APITOKEN -e LOCK__TIMEZONE=Europe/Prague -v toggl-mcp-data:/data toggl-mcp --stdio
 ```
 
-`-e TOGGL__APITOKEN` with no value passes the token through from the `env` block of the client
-config, so it still never appears on a command line you type.
+Claude Desktop (use the absolute path to `docker` if it is not found):
+
+```json
+{
+  "mcpServers": {
+    "toggl": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-e", "TOGGL__APITOKEN", "-e", "LOCK__TIMEZONE=Europe/Prague",
+               "-v", "toggl-mcp-data:/data", "toggl-mcp", "--stdio"],
+      "env": { "TOGGL__APITOKEN": "<your-token>" }
+    }
+  }
+}
+```
+
+`-e TOGGL__APITOKEN` with no value passes the token through from the client's `env` block, so it
+never appears in the container's command line. Containers run in UTC, so set `LOCK__TIMEZONE` to
+your own zone.
 
 ---
 
@@ -133,8 +150,8 @@ Adding a capability later is another `[McpServerTool]` method.
 ## Configuration
 
 All keys bind from `appsettings.json` or environment variables (`__` means nesting). In stdio mode
-`appsettings.json` is read from next to the binary, not from the working directory. See also
-`.env.example`.
+`appsettings.json` is read from next to the binary, not from the working directory. The Docker/HTTP setup reads
+`.env` through compose; see `.env.example`.
 
 | Key | Default | Meaning | Mode |
 |---|---|---|---|
@@ -150,18 +167,20 @@ All keys bind from `appsettings.json` or environment variables (`__` means nesti
 | `TOGGL__MINREQUESTINTERVALMS` | `1100` | Minimum gap between Toggl API calls. | both |
 | `TOGGL__MAXRETRIES` | `5` | Retries on throttling and transient errors. | both |
 | `TOGGL__RETRYBASEDELAYMS` | `1500` | Base delay for retry backoff. | both |
+| `TOGGL__BASEURL` | `https://api.track.toggl.com` | Toggl API base URL (the tests point it at a local stand-in). | both |
 | `TOGGL__CREATEDWITH` | `toggl-mcp` | Value sent as `created_with`. | both |
 | `AUTH__ENABLED` | `true` | JWT validation. The app refuses to start with auth off outside the Development environment (`dotnet run` is Development). | HTTP |
 | `AUTH__AUTHORITY` | none | OIDC issuer. | HTTP |
 | `AUTH__RESOURCEURL` | none | Public MCP URL. Must byte-match the JWT `aud` and the PRM `resource`. The `MapMcp` path is pinned to `/mcp`. | HTTP |
 | `AUTH__REQUIREDSCOPE` | none | Optional scope the token must carry. | HTTP |
 | `AUTH__ALLOWEDSUBJECTS__0`, `__1`, ... | none | Optional allowlist of `sub` values. | HTTP |
+| `AUTH__SCOPES__0`, ... | `openid` | Scopes advertised in the Protected Resource Metadata. | HTTP |
 | `AUTH__REQUIREHTTPSMETADATA` | `true` | Require HTTPS for the issuer metadata. | HTTP |
 | `ASPNETCORE_URLS` | ASP.NET default | Listen address. | HTTP |
 
 ---
 
-## Hosting it for a team (Streamable HTTP + OIDC)
+## Hosting it (Streamable HTTP + OIDC)
 
 Without `--stdio` the server runs as a Streamable HTTP service at `/mcp`, with `/healthz` and a
 `/settings` stub. Authentication (JWT bearer plus RFC 9728 Protected Resource Metadata) is on by
@@ -178,7 +197,8 @@ examples use `toggl-mcp.example.com` and `auth.example.com`.
 > tokens with `aud = client_id`, and has no Dynamic Client Registration, so the MCP-mandated
 > audience check is impossible. Broker Google through an OIDC provider instead.
 
-Note that a hosted deployment still has a single shared Toggl token (Phase 1). Per-user tokens were
+A hosted instance serves one Toggl account: every call uses the single token in `TOGGL__APITOKEN`
+(Phase 1), so do not share one between people with different accounts. Per-user tokens were
 planned but never built; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
@@ -188,7 +208,7 @@ planned but never built; see [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Toggl Basic auth field order:** the token is the *username*, the literal `api_token` the password.
 - **Idempotency:** Toggl has no idempotency key, and **nothing is ever appended to a description**; an entry reads exactly as the user approved it. Instead the server keeps a per-user ledger (`{STORAGE__DATADIR}/ledger/`) of `sourceUid` to Toggl entry id, and falls back to matching an entry's own content (start instant, duration, project). `plan_week` and `commit_plan` share one `DuplicateFinder` so they cannot disagree, and commit re-checks at write time. A ledger record whose entry no longer exists in Toggl is ignored, so deleting an entry lets it be written again. Entries written by early versions carry a `⟨sourceUid⟩` marker; it is still *read* for dedup, never written.
 - **Lock is opt-in:** with `LOCK__ENABLED=false` nothing is refused locally and Toggl is the only authority. When on, locked weeks are refused, not attempted.
-- **DST and day bucketing:** `start` is passed through verbatim as RFC 3339 with the source's own offset; never hardcode `+02:00`. The day or week an entry counts for is computed in `LOCK__TIMEZONE`, which is the machine's zone when blank. Containers run in UTC, so set it explicitly there.
+- **DST and day bucketing:** `start` is passed through verbatim as RFC 3339 with the source's own offset; never hardcode `+02:00`. The day or week an entry counts for is computed in `LOCK__TIMEZONE`, which is the machine's zone when blank. Containers run in UTC, so set it explicitly there. An id the machine does not know falls back to UTC without an error, so check the spelling.
 - **stdout is the protocol channel in stdio mode:** logs go to stderr. Do not write to stdout from anywhere in the server.
 - **JWT audience (HTTP mode):** many providers default `aud` to the client id; add a mapping that returns the exact MCP resource URL.
 - **`MapMcp` path:** pinned to `/mcp` so it byte-matches the PRM `resource`.

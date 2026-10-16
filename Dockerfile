@@ -29,6 +29,8 @@ ENV ASPNETCORE_URLS=http://+:8080 \
     DOTNET_gcServer=0
 EXPOSE 8080
 VOLUME ["/data"]
+# Under --stdio there is no HTTP listener, so Docker reports the container unhealthy. Harmless:
+# the client owns that container (`docker run -i --rm`) and nothing restarts it on health.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["/bin/sh", "-c", "curl -fsS http://127.0.0.1:8080/healthz || exit 1"]
 ENTRYPOINT ["dotnet", "TogglMcp.dll"]
