@@ -23,7 +23,7 @@ public sealed record PlanResult(
     string? PlanId,                         // frozen-plan token to pass to commit_plan; null when nothing is committable
     string WeekStart,                       // Monday of the reported (committable) week, yyyy-MM-dd
     bool WeekLocked,                        // lock state of that reported week
-    string? LocksAt,                        // when that week locks (formatted deadline); null if never
+    string? LocksAt,                        // when that week locks (formatted deadline); null when locking is off
     int NewCount,                           // entries ready to write
     int DuplicateCount,                     // skipped as already logged / duplicated within the batch
     int BlockedCount,                       // locked + invalid entries (nothing written for these)

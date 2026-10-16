@@ -93,4 +93,11 @@ public sealed class WeekLockPolicy
     /// </summary>
     public static string FormatDeadline(DateTimeOffset dto) =>
         dto.ToString("yyyy-MM-dd HH:mm zzz", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The deadline to report for a week, or null when locking is off — there is no deadline then,
+    /// and a reported one would be repeated to the user as if it were real. Module-shared so
+    /// week_status and plan_week agree.
+    /// </summary>
+    public string? DeadlineOf(WeekLockInfo info) => _o.Enabled ? FormatDeadline(info.LocksAt) : null;
 }

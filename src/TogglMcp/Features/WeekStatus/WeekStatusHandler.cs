@@ -44,20 +44,22 @@ internal sealed class WeekStatusHandler(ITogglClient toggl, WeekLockPolicy locks
             var working = day.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday);
             var hours = Math.Round(perDay.GetValueOrDefault(day), 2);
             var dayLock = locks.GetWeekLock(day);
-            days.Add(new DayStatus(day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), day.DayOfWeek.ToString(), working, hours, hours <= 0, dayLock.Editable, WeekLockPolicy.FormatDeadline(dayLock.LocksAt)));
+            days.Add(new DayStatus(day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), day.DayOfWeek.ToString(), working, hours, hours <= 0, dayLock.Editable, locks.DeadlineOf(dayLock)));
         }
 
         // Working days with no hours are what still needs back-filling; drive the summary off them.
         var emptyWorking = days.Where(d => d.Working && d.Empty).Select(d => d.DayOfWeek).ToList();
         var range = Invariant($"{weekStart:MMM d}–{weekEnd:MMM d}");
         // Summary branches: locked week -> point at admin; no empties -> all-filled; else list the empty days.
+        // The deadline is only mentioned when locking is on; otherwise there is none.
+        var deadline = locks.Enabled ? Invariant($" Locks {lockInfo.LocksAt:yyyy-MM-dd HH:mm}.") : "";
         var summary = lockInfo.IsLocked
             ? Invariant($"Week {range} is LOCKED (closed {lockInfo.LocksAt:yyyy-MM-dd HH:mm}); ask {locks.AdminContact} to reopen it.")
             : emptyWorking.Count == 0
-                ? Invariant($"Week {range}: all working days filled. Locks {lockInfo.LocksAt:yyyy-MM-dd HH:mm}.")
-                : Invariant($"Week {range}: {emptyWorking.Count} empty working day(s): {string.Join(", ", emptyWorking)}. Locks {lockInfo.LocksAt:yyyy-MM-dd HH:mm}.");
+                ? Invariant($"Week {range}: all working days filled.{deadline}")
+                : Invariant($"Week {range}: {emptyWorking.Count} empty working day(s): {string.Join(", ", emptyWorking)}.{deadline}");
 
         return new WeekStatusResult(weekStart.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), weekEnd.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            lockInfo.IsLocked, WeekLockPolicy.FormatDeadline(lockInfo.LocksAt), days, summary);
+            lockInfo.IsLocked, locks.DeadlineOf(lockInfo), days, summary);
     }
 }
