@@ -1,5 +1,12 @@
 # toggl-mcp
 
+> **Archived, no longer running (October 2026).** I built this for my own time tracking at a
+> previous job, where hours were logged in a shared Toggl Track workspace: at the end of a day or
+> week I asked Claude to read my calendar, git history and notes, propose the entries, and write
+> them to Toggl once I had confirmed them. I have left that job, so the service is shut down
+> (`toggl.irminsul.uk` no longer answers) and the repository is kept as a public reference. It is
+> not maintained. The deploy workflow is removed; the `deploy/` docs describe how it ran.
+
 A hosted **MCP server** that lets Claude **back-fill Toggl Track time entries** from
 whatever record of "what I did" you have (calendar, git, notes, second brain):
 **read → propose → you confirm → write.**
@@ -28,10 +35,8 @@ comes from. Claude reads the source via *its own* connectors and just proposes e
 
 ## Status
 
-- **Design:** complete (see the project note in the Obsidian vault).
-- **Phase 1 scaffold:** ✅ built and verified — server boots, Streamable HTTP transport
-  works, all eight tools register, argument binding + validation confirmed via a real MCP
-  client. Not yet run against a live Toggl account or deployed.
+- **Archived** in October 2026; see the note at the top.
+- It ran in 2026 behind Caddy with Authentik OAuth, deployed by GitHub Actions to a self-hosted box.
 
 ---
 
