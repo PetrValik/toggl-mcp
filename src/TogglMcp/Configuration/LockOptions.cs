@@ -3,11 +3,11 @@ using System.Text.Json.Serialization;
 namespace TogglMcp.Configuration;
 
 /// <summary>
-/// Timesheet lock policy. In our workspace the admin (Josef Širůčka) locks weeks
-/// permanently: at <see cref="CloseDayOfWeek"/> <see cref="CloseTime"/>, the week
-/// that ended <see cref="GraceWeeks"/> week(s) earlier closes and can never be
-/// edited again (only the admin can reopen it). The server must never attempt to
-/// write into a locked week — it refuses cleanly instead.
+/// Timesheet lock policy, for workspaces whose admin locks weeks permanently: at
+/// <see cref="CloseDayOfWeek"/> <see cref="CloseTime"/>, the week that ended
+/// <see cref="GraceWeeks"/> week(s) earlier closes and can never be edited again (only the
+/// admin can reopen it). When enabled, the server never attempts to write into a locked
+/// week — it refuses cleanly instead. Off by default: most workspaces never lock.
 /// </summary>
 public sealed class LockOptions
 {
@@ -15,10 +15,13 @@ public sealed class LockOptions
     public const string SectionName = "Lock";
 
     /// <summary>When false, nothing is ever considered locked (e.g. a workspace without locking).</summary>
-    public bool Enabled { get; set; } = true;
+    public bool Enabled { get; set; }
 
-    /// <summary>IANA time zone the lock clock runs in.</summary>
-    public string TimeZone { get; set; } = "Europe/Prague";
+    /// <summary>
+    /// IANA time zone that defines day and week boundaries (and the lock clock). Blank = the
+    /// machine's own time zone.
+    /// </summary>
+    public string TimeZone { get; set; } = "";
 
     /// <summary>Day of week the lock fires.</summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -34,5 +37,5 @@ public sealed class LockOptions
     public int GraceWeeks { get; set; } = 1;
 
     /// <summary>Who to contact to reopen a locked week (surfaced in refusal messages).</summary>
-    public string AdminContact { get; set; } = "Josef Širůčka";
+    public string AdminContact { get; set; } = "your workspace admin";
 }
