@@ -1,5 +1,6 @@
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 using TogglMcp.Features.ListProjects;
 using TogglMcp.Tests.Support;
 
@@ -32,6 +33,31 @@ public sealed class StdioHostTests
         Assert.Equal(
             ["add_mapping_rule", "commit_plan", "list_entries", "list_projects", "list_tasks", "plan_week", "suggest_project", "week_status"],
             tools.Select(t => t.Name).Order());
+    }
+
+    [Fact]
+    public async Task A_missing_token_is_named_to_the_model_instead_of_a_generic_failure()
+    {
+        using var data = new TempDataDir();
+        await using var client = await StartAsync(new() { ["STORAGE__DATADIR"] = data.Path, ["TOGGL__APITOKEN"] = "" });
+
+        var result = await client.CallToolAsync("list_projects", cancellationToken: Deadline());
+
+        Assert.True(result.IsError);
+        Assert.Contains("TOGGL__APITOKEN", TextOf(result));
+    }
+
+    [Fact]
+    public async Task A_token_Toggl_rejects_reaches_the_model_with_the_status()
+    {
+        using var toggl = new RejectingToggl();
+        using var data = new TempDataDir();
+        await using var client = await StartAsync(new() { ["STORAGE__DATADIR"] = data.Path, ["TOGGL__BASEURL"] = toggl.Url });
+
+        var result = await client.CallToolAsync("list_projects", cancellationToken: Deadline());
+
+        Assert.True(result.IsError);
+        Assert.Contains("401", TextOf(result));
     }
 
     [Fact]
@@ -69,10 +95,14 @@ public sealed class StdioHostTests
         }
     }
 
+    // What the model reads when a tool call fails.
+    private static string TextOf(CallToolResult result) =>
+        string.Concat(result.Content.OfType<TextContentBlock>().Select(b => b.Text));
+
     private static Task<McpClient> StartAsync(Dictionary<string, string?> env, string? workingDirectory = null)
     {
-        env["TOGGL__APITOKEN"] = "not-a-real-token";
-        env["TOGGL__BASEURL"] = UnreachableToggl;
+        env.TryAdd("TOGGL__APITOKEN", "not-a-real-token");
+        env.TryAdd("TOGGL__BASEURL", UnreachableToggl);
         env["TOGGL__WORKSPACEID"] = "1";
         env["TOGGL__MAXRETRIES"] = "0";
 

@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
+using ModelContextProtocol;
 using TogglMcp.Configuration;
 
 namespace TogglMcp.Tokens;
@@ -25,13 +26,14 @@ public sealed class EnvTogglTokenProvider(IOptions<TogglOptions> options, IHttpC
 
     /// <summary>
     /// Returns the configured account token, or throws if none is set — the message steers the operator
-    /// to the raw account token rather than a <c>toggl_sk_</c> API key (which Basic auth rejects).
+    /// to the raw account token rather than a <c>toggl_sk_</c> API key (which Basic auth rejects). An
+    /// <see cref="McpException"/>, so the model can tell the user what to set.
     /// </summary>
     public ValueTask<string> GetApiTokenAsync(CancellationToken ct = default)
     {
         var token = options.Value.ApiToken;
         if (string.IsNullOrWhiteSpace(token))
-            throw new InvalidOperationException(
+            throw new McpException(
                 "No Toggl token configured. Set Toggl:ApiToken (env TOGGL__APITOKEN) — the raw account token, not a toggl_sk_ key.");
         return ValueTask.FromResult(token);
     }

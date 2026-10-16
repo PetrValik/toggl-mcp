@@ -268,6 +268,7 @@ plan. Practical consequences:
 | Server refuses to start with auth off | Auth may only be disabled in the Development environment (`dotnet run` is Development). Otherwise leave `AUTH__ENABLED=true`. |
 | Client shows no tools, or the server exits at once (stdio) | The client could not start the command. On Claude Desktop use the absolute path to `toggl-mcp` (for example `/Users/you/.dotnet/tools/toggl-mcp`), and check that the .NET 10 runtime is installed. The server's own log goes to stderr, which the client keeps in its MCP log. |
 | A tool call fails with "No Toggl token configured" | The client's `env` block does not set `TOGGL__APITOKEN`. The server starts and lists tools without a token; it only needs one when it calls Toggl. |
+| A tool call fails with "Toggl API returned 401 Unauthorized" (or 403) | Toggl rejected the token: it was mistyped, reset in Toggl, or is a `toggl_sk_` key instead of the raw account token from Profile settings. |
 | Garbled or failed handshake (stdio) | Something wrote to stdout, which is the protocol channel. Logs go to stderr. This only happens in a fork that adds `Console.WriteLine` or similar; switch it to stderr or the logger. |
 
 **Never** paste your Toggl token into chat: the token is only ever read from
