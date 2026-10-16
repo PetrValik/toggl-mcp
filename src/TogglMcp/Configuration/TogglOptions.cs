@@ -1,9 +1,9 @@
 namespace TogglMcp.Configuration;
 
 /// <summary>
-/// Toggl Track API v9 settings. In Phase 1 (solo) the API token comes from the
-/// environment via <see cref="ApiToken"/>. In Phase 3 the token is resolved
-/// per-user from the encrypted vault, and this value is ignored.
+/// Toggl Track API v9 settings. The API token comes from the
+/// environment via <see cref="ApiToken"/> (<c>TOGGL__APITOKEN</c>). A per-user encrypted token
+/// vault (roadmap Phase 3, never built) would resolve it per user instead and ignore this value.
 /// </summary>
 public sealed class TogglOptions
 {
@@ -14,10 +14,9 @@ public sealed class TogglOptions
     public string BaseUrl { get; set; } = "https://api.track.toggl.com";
 
     /// <summary>
-    /// Phase 1 single-user API token (the raw account token, NOT a <c>toggl_sk_</c>
+    /// Single-user API token (the raw account token, NOT a <c>toggl_sk_</c>
     /// key — that belongs to a different product). Used as the Basic-auth *username*
-    /// with the literal password <c>api_token</c>. Leave empty once the per-user
-    /// vault (Phase 3) is enabled.
+    /// with the literal password <c>api_token</c>. Required: this is the only token source that exists.
     /// </summary>
     public string? ApiToken { get; set; }
 

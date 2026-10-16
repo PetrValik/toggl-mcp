@@ -1,4 +1,5 @@
 # claude-kit profile — toggl-mcp
+# Read only by the optional claude-kit plugin; without it this file does nothing.
 # A Toggl <-> Claude MCP server. NOTE: this is an MCP tool server, not an HTTP/EF web
 # API, so the vsa_dotnet pack is applied in adapted form. The adapted rule-set is this
 # repo's own skill: .claude/skills/mcp-slice-architecture/ (gated via skill_routes below).
@@ -8,8 +9,8 @@ project:
   stack: dotnet
   kind: mcp-server
 
-build:
-  build: "dotnet build src/TogglMcp/TogglMcp.csproj"
+commands:
+  build: "dotnet build TogglMcp.slnx"
   test: "dotnet test TogglMcp.slnx"
 
 # The first edit under Features/ is denied until this repo's own slice rule-set has been
@@ -18,8 +19,8 @@ skill_routes:
   - { glob: "src/TogglMcp/Features/**", skill: mcp-slice-architecture, why: "a slice here is one MCP tool, not a web endpoint" }
 
 git:
-  default_branch: main
-  can_push: true      # owner-authorised pushes to the private repo PetrValik/toggl-mcp
+  trunk: main
+  can_push: true      # owner-authorised pushes to PetrValik/toggl-mcp (public, archived: unarchive first)
   pr: false
 
 packs:

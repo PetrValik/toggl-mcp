@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
-# Multi-stage build. Same image runs on Hetzner (Phase 1) and company AWS (Phase 3) —
-# host swap is a redeploy, not a rewrite.
+# Multi-stage build. The same image runs anywhere Docker does, in either mode:
+#   hosted HTTP (default):  docker run -p 127.0.0.1:8080:8080 --env-file .env toggl-mcp
+#   local stdio:            docker run -i --rm -e TOGGL__APITOKEN -v toggl-mcp-data:/data toggl-mcp --stdio
 
 # Base images pinned by digest for reproducible builds (bump deliberately — re-resolve a tag with
 # `docker buildx imagetools inspect mcr.microsoft.com/dotnet/<repo>:10.0`).
@@ -20,7 +21,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 # Non-root. The aspnet image ships an 'app' user (uid 1654).
 COPY --from=build /app .
-# Durable state (mapping rules, commit ledger; Phase 3 token vault + Data Protection key ring).
+# Durable state (mapping rules and the commit ledger).
 RUN mkdir -p /data && chown -R app:app /data
 USER app
 ENV ASPNETCORE_URLS=http://+:8080 \

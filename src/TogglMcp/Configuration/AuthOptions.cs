@@ -1,9 +1,10 @@
 namespace TogglMcp.Configuration;
 
 /// <summary>
-/// OAuth 2.1 resource-server settings. Authentik is the authorization server; this
-/// service validates the JWT it issues. Disabled by default so Phase 1 can run
-/// locally (single env token, no login). Enable once the connector is wired.
+/// OAuth 2.1 resource-server settings for the hosted HTTP mode. The OIDC provider (Authentik in
+/// the tested setup) is the authorization server; this service validates the JWT it issues.
+/// Enabled by default; the app refuses to start with it off outside the Development environment.
+/// Not used in <c>--stdio</c> mode, where the process boundary is the trust boundary.
 /// </summary>
 public sealed class AuthOptions
 {
@@ -11,21 +12,21 @@ public sealed class AuthOptions
     public const string SectionName = "Auth";
 
     /// <summary>
-    /// When false the MCP endpoint is open (no JWT required) — for local Phase 1
+    /// When false the MCP endpoint is open (no JWT required) — for local development
     /// only. MUST be true for any publicly reachable deployment.
     /// </summary>
     public bool Enabled { get; set; }
 
     /// <summary>
-    /// Authentik issuer / OIDC authority, e.g.
-    /// <c>https://auth.irminsul.uk/application/o/toggl-mcp/</c>. Used as the JWT
+    /// OIDC issuer / authority of your provider, e.g.
+    /// <c>https://auth.example.com/application/o/toggl-mcp/</c> (Authentik style). Used as the JWT
     /// <c>iss</c> and to discover JWKS.
     /// </summary>
     public string? Authority { get; set; }
 
     /// <summary>
     /// The public MCP resource URL that must appear in the token <c>aud</c>, e.g.
-    /// <c>https://toggl.irminsul.uk/mcp</c>. This is both the JWT audience and the
+    /// <c>https://toggl-mcp.example.com/mcp</c>. This is both the JWT audience and the
     /// <c>resource</c> in the Protected Resource Metadata — they must byte-match.
     /// </summary>
     public string? ResourceUrl { get; set; }
@@ -43,7 +44,7 @@ public sealed class AuthOptions
     public string? RequiredScope { get; set; }
 
     /// <summary>
-    /// Optional allowlist of Authentik <c>sub</c> values permitted to use the server. Empty =
+    /// Optional allowlist of OIDC <c>sub</c> values permitted to use the server. Empty =
     /// any authenticated principal is allowed. Set before opening the app to multiple users.
     /// </summary>
     public string[] AllowedSubjects { get; set; } = [];

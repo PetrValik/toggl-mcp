@@ -1,0 +1,23 @@
+# Builds and tests only. There is no deploy step and no secrets: the hosted service was shut
+# down in October 2026 and the old deploy workflow was removed with it.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        run: dotnet build TogglMcp.slnx -c Release
+
+      - name: Test
+        run: dotnet test TogglMcp.slnx -c Release --no-build

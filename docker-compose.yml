@@ -1,7 +1,7 @@
-# Deploy on `cloud` (Hetzner). Caddy already runs there on the shared `web` network
-# and terminates TLS for every *.irminsul.uk host (see deploy/Caddyfile.snippet).
-# This service joins `web` so Caddy can reach it by container name; it does NOT
-# publish a host port.
+# Hosted HTTP mode: one container, published on loopback only (127.0.0.1:8080) so a reverse
+# proxy on the same host (see deploy/Caddyfile.snippet) can terminate TLS in front of it.
+# Configuration comes from .env (copy .env.example). See deploy/DEPLOY.md.
+# For the local stdio mode you do not need compose; see README.md.
 services:
   toggl-mcp:
     build: .
@@ -12,16 +12,12 @@ services:
     environment:
       ASPNETCORE_URLS: "http://+:8080"
       STORAGE__DATADIR: "/data"
+      # Containers run in UTC; set this so day and week boundaries match your timezone.
+      # LOCK__TIMEZONE: "Europe/Prague"
     volumes:
-      - toggl-mcp-data:/data          # mapping rules, commit ledger + (Phase 3) token vault & DP key ring
-    networks:
-      - web
-    expose:
-      - "8080"
+      - toggl-mcp-data:/data          # mapping rules and the commit ledger
+    ports:
+      - "127.0.0.1:8080:8080"         # loopback only; never publish this directly to the internet
 
 volumes:
   toggl-mcp-data:
-
-networks:
-  web:
-    external: true                     # the shared proxy network Caddy is attached to

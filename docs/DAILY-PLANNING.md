@@ -4,11 +4,8 @@ How the model turns a day's activity notes into a reviewed set of Toggl entries.
 "brain" of the tool — the part that saves the time you'd otherwise spend *writing up* what you
 did. The server just validates and writes what you approve (`plan_week` → `commit_plan`).
 
-> **This page is the human explanation — the *why*, plus prompts to paste.** The model-facing
-> version of the same method is the `toggl-timelog` skill in the
-> [claude-kit](https://github.com/PetrValik/Claude-kit) `kit-timelog` plugin (with the `/timelog`
-> command). That skill is canonical for how Claude behaves; keep the two in step when the method
-> changes, and change the skill first.
+> **This page is the canonical description of the method** — the *why*, plus prompts to paste.
+> Point your model at it (or paste the parts you need) and it will follow the same steps.
 
 ## Scope: one day back (default), or more
 
@@ -33,9 +30,9 @@ own reconcile step. Weekends and days off are skipped, never filled.
    invents filler entries to reach 8 h.
 5. **You review every entry before it's written.** `commit_plan` only replays what you approved.
 
-> Why the guard rails: the výkaz is an official record. "Summarise what I really did, faster" is
+> Why the guard rails: the timesheet is an official record. "Summarise what I really did, faster" is
 > unquestionable. "Pad the numbers to 8 h" is the exact thing a Toggl admin (and anyone above)
-> will call fabrication — and it lands on you, not the tool. Rule 3–4 keep you on the right side.
+> will call fabrication — and it lands on you, not the tool. Rules 3 and 4 keep you on the right side.
 
 ## Inputs each day
 
@@ -57,7 +54,7 @@ Current default: **09:00–17:30, lunch 11:15–11:45 → exactly 8.0 h worked**
 3. **Real work** — extract the actual work items from your notes; group by project/task.
 4. **Allocate** — split the remaining window (`window − lunch − meetings`) across those real items,
    proportional to effort, with honest duration estimates.
-5. **Describe** — write one concise, factual description per item — the *výcuc* of what you did,
+5. **Describe** — write one concise, factual description per item — the gist of what you did,
    straight from the notes (this is the part that eats your time).
 6. **Reconcile** — the entries should sum to your real window. If they fall short, **report the
    gap** instead of inventing entries.
@@ -66,29 +63,30 @@ Current default: **09:00–17:30, lunch 11:15–11:45 → exactly 8.0 h worked**
 For a **multi-day** request, run steps 1–7 independently for each working day in range (its own
 window, lunch, meetings and reconcile); skip weekends and days off.
 
-## Ready-to-use prompts (paste into Claude with the connector on)
+## Ready-to-use prompts (paste into Claude with toggl-mcp connected)
 
 **Default — one day back (yesterday):**
 
-> Doplň mi do Togglu **včerejšek**. Tady jsou moje poznámky a kalendář za včera; pracovní okno
-> 09:00–17:30, oběd 11:15–11:45. Reálné meetingy v jejich časech, oběd mimo (nezapisovat), a moji
-> reálnou práci z poznámek rozděl do zbytku okna — poctivé odhady délky a u každé položky jasný
-> popis toho, co jsem dělal. **Když práce nepokryje okno, řekni mi, kolik chybí — nic nedoplňuj.**
-> Ukaž návrh k odsouhlasení, teprve pak zapíšeme.
+> Fill in my Toggl for **yesterday**. Here are my notes and calendar for it; working window
+> 09:00–17:30, lunch 11:15–11:45. Put real meetings at their real times, leave lunch out (don't
+> log it), and split my real work from the notes across the rest of the window, with honest
+> duration estimates and a clear description of what I did for each item. **If the work doesn't
+> cover the window, tell me how much is missing — don't fill it.** Show me the proposal to
+> approve, and only then write it.
 
 **More days — catch up a range / the week:**
 
-> Doplň mi Toggl za {od}–{do} (přeskoč víkendy a dny volna). Pro **každý** pracovní den zvlášť:
-> reálné meetingy, oběd mimo, práci z poznámek toho dne rozděl do jeho okna 09:00–17:30 (oběd 11:15–11:45) s
-> poctivými odhady a jasným popisem, a u každého dne mi řekni, jestli něco chybí (nedoplňuj).
-> Ukaž celý návrh po dnech k odsouhlasení, pak zapíšeme.
+> Fill in my Toggl for {from}–{to} (skip weekends and days off). For **each** working day
+> separately: real meetings, lunch left out, and that day's work from the notes split across its
+> 09:00–17:30 window (lunch 11:15–11:45) with honest estimates and a clear description, and for
+> each day tell me whether anything is missing (don't fill it). Show the whole proposal day by
+> day for approval, then write it.
 
-## Per-user defaults (later)
+## Per-user defaults (not built)
 
-Each user is already a separate identity server-side (`UserKey` = the authenticated `sub`), and
-mapping rules are stored per user. That same slot is the natural home for a per-user **profile** —
-your working window and lunch — so once the team is on it, everyone gets their own defaults and
-nobody hard-codes hours into a prompt. Until then, the defaults live in the prompt above.
+Today the defaults live in the prompt above. The roadmap's Phase 3 would key a per-user profile
+(working window, lunch) and a token vault on the OIDC `sub` in hosted mode; that was never built.
+Mapping rules are stored under `STORAGE__DATADIR`, not in a profile.
 
 ## What this is deliberately NOT
 

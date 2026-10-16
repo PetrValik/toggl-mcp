@@ -1,208 +1,238 @@
 # toggl-mcp
 
-> **Archived, no longer running (October 2026).** I built this for my own time tracking at a
-> previous job, where hours were logged in a shared Toggl Track workspace: at the end of a day or
-> week I asked Claude to read my calendar, git history and notes, propose the entries, and write
-> them to Toggl once I had confirmed them. I have left that job, so the service is shut down
-> (`toggl.irminsul.uk` no longer answers) and the repository is kept as a public reference. It is
-> not maintained. The deploy workflow is removed; the `deploy/` docs describe how it ran.
+> **Archived (October 2026), not maintained, but complete and runnable.** I built this for my own
+> time tracking at a previous job, where hours were logged in a shared Toggl Track workspace: at the
+> end of a day or week I asked Claude to read my calendar, git history and notes, propose the
+> entries, and write them to Toggl once I had confirmed them. It ran as a hosted service on my own
+> server. I have left that job, so the service is shut down and the repository is archived. Nothing
+> here depends on it: fork it, run it on your own machine, finish it. What is unfinished is listed
+> in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-A hosted **MCP server** that lets Claude **back-fill Toggl Track time entries** from
-whatever record of "what I did" you have (calendar, git, notes, second brain):
-**read → propose → you confirm → write.**
+An **MCP server** that lets Claude **back-fill Toggl Track time entries** from whatever record of
+"what I did" you have (calendar, git, notes): **read, propose, you confirm, write.**
 
-It is **one always-on web service**, not an app anyone installs. Claude's cloud calls
-it over HTTPS; the server holds the Toggl token(s) and calls the Toggl API v9. Users add
-a connector URL in Claude once and log in — nothing runs on their machine.
+It is source-agnostic by design. The server knows nothing about where your work record comes from;
+Claude reads the sources through its own connectors and only proposes entries (`plan_week`), and
+nothing is written until you approve the plan (`commit_plan`).
+
+---
+
+## Quick start (local, stdio)
+
+This is the recommended way to run it. The MCP client launches the process itself with `--stdio`:
+no HTTP port, no login, and the process boundary is the trust boundary.
+
+**Prerequisite:** the .NET 10 SDK.
+
+```bash
+git clone https://github.com/PetrValik/toggl-mcp.git && cd toggl-mcp
+dotnet pack src/TogglMcp -c Release -o ./nupkg
+dotnet tool install --global TogglMcp --add-source ./nupkg
+```
+
+This installs a command named `toggl-mcp` into `~/.dotnet/tools` (Windows:
+`%USERPROFILE%\.dotnet\tools`); if your shell cannot find it, add that folder to `PATH` or use the
+absolute path. It is not published to NuGet. After pulling changes, re-pack and run
+`dotnet tool update --global TogglMcp --add-source ./nupkg` (bump `<Version>` in
+`src/TogglMcp/TogglMcp.csproj`, or uninstall and reinstall).
+
+**Get your Toggl token:** Toggl Track, Profile settings, API Token. Use the raw account token, not a
+`toggl_sk_` key.
+
+The token lives only in your MCP client's config (or environment) on your own machine. It is never a
+tool argument and never something you type into chat; MCP forbids token passthrough because tool
+arguments transit the model.
+
+**Claude Code:**
+
+```bash
+claude mcp add toggl -e TOGGL__APITOKEN=<your-token> -- toggl-mcp --stdio
+```
+
+**Claude Desktop** (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "toggl": {
+      "command": "/Users/you/.dotnet/tools/toggl-mcp",
+      "args": ["--stdio"],
+      "env": { "TOGGL__APITOKEN": "<your-token>" }
+    }
+  }
+}
+```
+
+Use the absolute path to the command: GUI apps do not inherit your shell `PATH`.
+
+**Docker instead of the .NET tool** (still stdio):
+
+```bash
+docker build -t toggl-mcp .
+```
+
+Then set the client's command to:
 
 ```
-Claude cloud ──HTTPS──▶ https://toggl.irminsul.uk/mcp   (this service, always on)
-                          holds Toggl token(s), calls Toggl API v9
-You + colleagues: add that URL in Claude once + OAuth login. No install.
+docker run -i --rm -e TOGGL__APITOKEN -e LOCK__TIMEZONE=Europe/Prague -v toggl-mcp-data:/data toggl-mcp --stdio
 ```
 
-**Source-agnostic by design:** the server has zero knowledge of where the work record
-comes from. Claude reads the source via *its own* connectors and just proposes entries (`plan_week` → `commit_plan`).
+`-e TOGGL__APITOKEN` with no value passes the token through from the `env` block of the client
+config, so it still never appears on a command line you type.
 
 ---
 
 ## Docs
 
-- **[docs/USAGE.md](docs/USAGE.md)** — day-to-day usage: the read → propose → confirm → write flow, a tool reference with examples, mapping rules, the lock, and troubleshooting.
-- **[docs/DAILY-PLANNING.md](docs/DAILY-PLANNING.md)** — turning your activity notes into a reviewed Toggl day: the honesty guard rails, one-day-back default, and ready-to-use prompts.
+- **[docs/USAGE.md](docs/USAGE.md)**: day-to-day usage, the read, propose, confirm, write flow, a tool reference with examples, mapping rules, the lock, and troubleshooting.
+- **[docs/DAILY-PLANNING.md](docs/DAILY-PLANNING.md)**: turning your activity notes into a reviewed Toggl day: the honesty guard rails, one-day-back default, and ready-to-use prompts.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)**: what is unfinished and how to pick it up.
 
 ---
-
-## Status
-
-- **Archived** in October 2026; see the note at the top.
-- It ran in 2026 behind Caddy with Authentik OAuth, deployed by GitHub Actions to a self-hosted box.
-
----
-
-## Stack
-
-- **ASP.NET Core (.NET 10) + `ModelContextProtocol.AspNetCore` 1.4.1**, Streamable HTTP transport.
-- One **Docker** container, config via env, behind **Caddy** (cloud/Hetzner) or ALB/App Runner (AWS).
-  Same image both places → Hetzner → AWS is a redeploy, not a rewrite.
-- Toggl called server-side; token from env (Phase 1) or per-user vault (Phase 3).
 
 ## Tools exposed
 
 | Tool | Kind | Purpose |
 |---|---|---|
-| `week_status(weekOf?)` | read | Which working days of a week are empty vs filled, + when the week locks. |
-| `plan_week(entries[])` | read (stages) | Prepare a back-fill proposal — validate, resolve, dedup, lock-check. **Writes nothing**; returns a `planId`. |
-| `commit_plan(planId, exclude?)` | **write** | The **only** write path — replays exactly the approved plan into Toggl. |
-| `list_projects` | read | Active projects in the shared workspace. |
-| `list_tasks(projectId)` | read | Tasks under a project (Starter+ feature). |
+| `week_status(weekOf?)` | read | Which working days of a week are empty vs filled, plus when the week locks (if the lock is on). |
+| `plan_week(entries[])` | read (stages) | Prepare a back-fill proposal: validate, resolve, dedup, lock-check. **Writes nothing**; returns a `planId`. |
+| `commit_plan(planId, exclude?)` | **write** | The **only** write path. Replays exactly the approved plan into Toggl. |
+| `list_projects` | read | Active projects in the workspace. |
+| `list_tasks(projectId)` | read | Tasks under a project (a Toggl Starter+ feature). |
 | `list_entries(from?, to?)` | read | Entries in a date range (default last 7 days). |
 | `suggest_project(calendarName, title)` | read | Rule match (silent) or fuzzy guess (confirm). |
-| `add_mapping_rule(keyword, projectId)` | write | Teach a keyword→project rule. |
+| `add_mapping_rule(keyword, projectId)` | write | Teach a keyword to project rule. |
 
-### The write flow (enforced: propose → approve → commit)
-Back-fill is deliberately two-phase so a write can only ever be a replay of something you approved:
+### The write flow (enforced: propose, approve, commit)
 
-1. **`week_status`** → shows the gaps and the lock deadline.
-2. **`plan_week(entries[])`** → the model proposes entries for the empty working days (weekends and days off simply omitted). The server validates each, resolves projects, dedups against Toggl, checks the lock, and **freezes** the resolved plan under a `planId`. **Nothing is written.**
-3. You **review** the preview → approve, drop rows, or ask for changes (re-plan).
-4. **`commit_plan(planId, exclude?)`** → writes exactly the frozen "new" entries. No re-interpretation; the model can't commit something different from the preview.
+Back-fill is deliberately two-phase, so a write can only ever be a replay of something you approved:
 
-There is **no direct `log_time`** — every write goes through an approved plan.
+1. **`week_status`** shows the gaps.
+2. **`plan_week(entries[])`**: the model proposes entries for the empty working days (weekends and days off are simply omitted). The server validates each one, resolves projects, dedups against Toggl, checks the lock, and **freezes** the resolved plan under a `planId`. **Nothing is written.**
+3. You **review** the preview: approve, drop rows, or ask for changes (which means re-planning).
+4. **`commit_plan(planId, exclude?)`** writes exactly the frozen "new" entries. No re-interpretation; the model cannot commit something different from the preview.
 
-### Timesheet lock (hard rule)
-Weeks lock **permanently at Friday 23:59 (Europe/Prague)**: each Friday the *previous* week closes and can never be edited again — only the workspace admin (**Josef Širůčka**) can reopen it. The tools compute this (`Lock` config), stay inside the editable window (current + last week), and **refuse locked days** with a "contact the admin" message instead of failing. Configurable via the `Lock` section.
+There is **no direct `log_time`**. Every write goes through an approved plan.
 
-Adding a capability later = another `[McpServerTool]` method → instantly live on all devices.
+### Timesheet lock (opt-in)
 
----
+Some workspaces have an admin who locks past weeks permanently, after which nothing in them can be
+edited. The server can mirror that rule so it refuses locked days up front instead of failing
+halfway through a commit. It is **off by default**; turn it on with `LOCK__ENABLED=true`.
 
-## Run Phase 1 locally (just you)
+When enabled, a week locks on a configurable day and time (`LOCK__CLOSEDAYOFWEEK`, `LOCK__CLOSETIME`)
+once the configured number of grace weeks has passed (`LOCK__GRACEWEEKS`), in the zone given by
+`LOCK__TIMEZONE`. The tools stay inside the editable window and refuse locked days with a message
+that names `LOCK__ADMINCONTACT`. With the defaults, a week locks on the Friday of the following week
+at 23:59. A locked week is refused, not retried.
 
-Requires the **.NET 10 SDK**.
-
-```bash
-cd src/TogglMcp
-
-# Your raw Toggl token (Toggl → Profile → API Token). NOT a toggl_sk_ key.
-export TOGGL__APITOKEN="<your-toggl-api-token>"
-# Local dev (dotnet run = Development env) runs with auth OFF → /mcp is open. Local use ONLY.
-export AUTH__ENABLED=false
-
-dotnet run
-```
-
-Then point any MCP client at `http://localhost:<port>/mcp` (Streamable HTTP). Health
-check: `curl http://localhost:<port>/healthz`.
-
-> **Security:** the Toggl token is only ever read from configuration/env or (Phase 3)
-> the encrypted vault. It is **never** accepted as a tool argument and never logged —
-> MCP forbids token passthrough because tool args transit the model.
-
-### Configuration
-
-All keys bind from `appsettings.json` or env (`__` = nesting). See `.env.example`.
-
-| Env | Default | Meaning |
-|---|---|---|
-| `TOGGL__APITOKEN` | — | Phase 1 account token (Basic-auth username; password is literal `api_token`). |
-| `TOGGL__WORKSPACEID` | *(from `/me`)* | Pin the workspace; else discovered once and cached. |
-| `AUTH__ENABLED` | `true` | JWT validation. **Secure by default**; auto-off under the Development env for local `dotnet run`. The app **refuses to start** with auth off outside Development. |
-| `AUTH__AUTHORITY` | — | Authentik OIDC issuer. |
-| `AUTH__RESOURCEURL` | — | Public MCP URL; must match JWT `aud` and PRM `resource`. |
-| `STORAGE__DATADIR` | `data` | Durable dir (mapping rules; Phase 3 vault + key ring). |
+Adding a capability later is another `[McpServerTool]` method.
 
 ---
 
-## Deploy to `cloud` (Phase 1/3)
+## Configuration
 
-1. Copy `.env.example` → `.env`, set `TOGGL__APITOKEN`; for a public deploy also set
-   `AUTH__ENABLED=true`, `AUTH__AUTHORITY`, `AUTH__RESOURCEURL=https://toggl.irminsul.uk/mcp`.
-2. `docker compose up -d --build` (joins the shared external `web` network).
-3. Add `deploy/Caddyfile.snippet` to the cloud Caddyfile and reload Caddy.
-4. Verify: `curl https://toggl.irminsul.uk/healthz`.
+All keys bind from `appsettings.json` or environment variables (`__` means nesting). In stdio mode
+`appsettings.json` is read from next to the binary, not from the working directory. See also
+`.env.example`.
 
-### Authentik setup checklist (required before `AUTH__ENABLED=true`)
-
-- Authentik **≥ 2025.8** (RFC 8414 metadata).
-- An OAuth2/OpenID **Provider** for this app; note its issuer → `AUTH__AUTHORITY`.
-- **Scope Mapping bound to the `openid` scope** returning `{"aud": "https://toggl.irminsul.uk/mcp"}`.
-  The default `aud` is the client_id, which fails the MCP audience check.
-- Assign an **RSA signing key** to the provider (else it signs HS256, not JWKS-verifiable).
-- Phase 3 team login: federate Authentik → company **Google Workspace** (Directory →
-  Federation → Google source; "Link on unique identifier"; enrollment flow
-  `default-source-enrollment`; gate the domain via Google "Internal" consent + the `hd` claim).
-
-> **Why Authentik and not Google directly:** Google ignores the RFC 8707 `resource`
-> param, issues opaque tokens with `aud = client_id`, and has no Dynamic Client
-> Registration — so the MCP-mandated audience check is impossible. Brokering through
-> Authentik is the correct path.
-
----
-
-## Connect in Claude
-
-Add a **custom connector** with URL `https://toggl.irminsul.uk/mcp` and complete the
-OAuth login. The C# SDK auto-serves the RFC 9728 Protected Resource Metadata at
-`/.well-known/oauth-protected-resource` and the `401 WWW-Authenticate` challenge, so
-Claude discovers the Authentik authorization server automatically.
+| Key | Default | Meaning | Mode |
+|---|---|---|---|
+| `TOGGL__APITOKEN` | none, required | Raw account token. Basic-auth username; the password is the literal `api_token`. | both |
+| `TOGGL__WORKSPACEID` | from `/me` | Pin the workspace. Otherwise `default_workspace_id` is discovered once and cached. | both |
+| `STORAGE__DATADIR` | `data` | Durable directory for mapping rules and the commit ledger. In stdio mode a relative value resolves under your local app-data folder: macOS `~/Library/Application Support/toggl-mcp/data`, Linux `$XDG_DATA_HOME` or `~/.local/share/toggl-mcp/data`, Windows `%LOCALAPPDATA%\toggl-mcp\data`. In HTTP mode it is relative to the working directory. The Docker image sets `/data` (a volume). | both |
+| `LOCK__ENABLED` | `false` | Opt-in permanent weekly timesheet lock. | both |
+| `LOCK__TIMEZONE` | blank, the machine's time zone | IANA id, for example `Europe/Prague`. Defines day and week boundaries for `week_status` and `plan_week` even when the lock is off. Set it explicitly in containers, which run in UTC. | both |
+| `LOCK__CLOSEDAYOFWEEK` | `Friday` | Day on which a week closes. | both |
+| `LOCK__CLOSETIME` | `23:59:00` | Time of day on that day. | both |
+| `LOCK__GRACEWEEKS` | `1` | A week locks on the close day of the following week when this is 1. | both |
+| `LOCK__ADMINCONTACT` | `your workspace admin` | Named in refusal messages. | both |
+| `TOGGL__MINREQUESTINTERVALMS` | `1100` | Minimum gap between Toggl API calls. | both |
+| `TOGGL__MAXRETRIES` | `5` | Retries on throttling and transient errors. | both |
+| `TOGGL__RETRYBASEDELAYMS` | `1500` | Base delay for retry backoff. | both |
+| `TOGGL__CREATEDWITH` | `toggl-mcp` | Value sent as `created_with`. | both |
+| `AUTH__ENABLED` | `true` | JWT validation. The app refuses to start with auth off outside the Development environment (`dotnet run` is Development). | HTTP |
+| `AUTH__AUTHORITY` | none | OIDC issuer. | HTTP |
+| `AUTH__RESOURCEURL` | none | Public MCP URL. Must byte-match the JWT `aud` and the PRM `resource`. The `MapMcp` path is pinned to `/mcp`. | HTTP |
+| `AUTH__REQUIREDSCOPE` | none | Optional scope the token must carry. | HTTP |
+| `AUTH__ALLOWEDSUBJECTS__0`, `__1`, ... | none | Optional allowlist of `sub` values. | HTTP |
+| `AUTH__REQUIREHTTPSMETADATA` | `true` | Require HTTPS for the issuer metadata. | HTTP |
+| `ASPNETCORE_URLS` | ASP.NET default | Listen address. | HTTP |
 
 ---
 
-## Phased plan
+## Hosting it for a team (Streamable HTTP + OIDC)
 
-1. **Phase 1 — cloud, just me:** env token, `AUTH__ENABLED=false` locally then `true`
-   with Authentik locked to me. Validates the whole Toggl + Authentik + connector chain.
-2. **Phase 2 — identity spike:** 2 devs connect on Claude Team; the server logs the `sub`
-   it sees. **Distinct → per-user vault is safe. Same → stop before building it.** This is
-   the one live risk: org-admin-added connectors have credible reports of collapsing to a
-   single shared token ("last authenticator wins").
-3. **Phase 3 — team on AWS:** switch on the per-user encrypted vault (registered via
-   `/settings`, keyed by Authentik `sub`) + Google-federated login; redeploy the same image
-   to company AWS + subdomain; publish self-host docs.
+Without `--stdio` the server runs as a Streamable HTTP service at `/mcp`, with `/healthz` and a
+`/settings` stub. Authentication (JWT bearer plus RFC 9728 Protected Resource Metadata) is on by
+default, and the app refuses to start with auth off outside the Development environment. A client
+that gets a `401` discovers the authorization server from
+`/.well-known/oauth-protected-resource`.
+
+Any OIDC provider works if it (a) puts the exact MCP resource URL in the access token's `aud` claim
+and (b) signs RS256 with a JWKS. I tested it with Authentik 2025.8 or newer. For a worked example
+(Docker Compose, reverse proxy, provider setup) see [deploy/DEPLOY.md](deploy/DEPLOY.md); the
+examples use `toggl-mcp.example.com` and `auth.example.com`.
+
+> **Why not Google directly:** Google ignores the RFC 8707 `resource` parameter, issues opaque
+> tokens with `aud = client_id`, and has no Dynamic Client Registration, so the MCP-mandated
+> audience check is impossible. Broker Google through an OIDC provider instead.
+
+Note that a hosted deployment still has a single shared Toggl token (Phase 1). Per-user tokens were
+planned but never built; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
 
 ## Gotchas baked into the code (don't undo them)
 
-- **Toggl Basic auth field order:** token is the *username*, literal `api_token` the password.
-- **Idempotency:** Toggl has no idempotency key, and **nothing is ever appended to a
-  description** — an entry reads exactly as the user approved it. Instead the server keeps a
-  per-user ledger (`{STORAGE__DATADIR}/ledger/`) of `sourceUid → Toggl entry id`, and falls back
-  to matching an entry's own content (start instant + duration + project). `plan_week` and
-  `commit_plan` share one `DuplicateFinder` so they can't disagree, and commit re-checks at write
-  time. A ledger record whose entry no longer exists in Toggl is ignored, so deleting an entry
-  lets it be written again. Entries written before 2026-08-18 still carry the old `⟨sourceUid⟩`
-  marker; it is still *read* for dedup, never written.
-- **Lock:** never write past Friday 23:59 (Europe/Prague) — locked weeks are refused, not
-  attempted. Only the admin can reopen a week.
-- **DST:** `start` is passed through verbatim as RFC3339 with the source's own offset —
-  never hardcode `+02:00`; the day/week an entry counts for is computed in Europe/Prague.
-- **JWT audience:** Authentik's default `aud` is the client_id → add the `aud` scope mapping.
-- **Data Protection key ring (Phase 3):** must be persisted to `STORAGE__DATADIR` with a
-  fixed application name, or a restart makes every stored token undecryptable.
+- **Toggl Basic auth field order:** the token is the *username*, the literal `api_token` the password.
+- **Idempotency:** Toggl has no idempotency key, and **nothing is ever appended to a description**; an entry reads exactly as the user approved it. Instead the server keeps a per-user ledger (`{STORAGE__DATADIR}/ledger/`) of `sourceUid` to Toggl entry id, and falls back to matching an entry's own content (start instant, duration, project). `plan_week` and `commit_plan` share one `DuplicateFinder` so they cannot disagree, and commit re-checks at write time. A ledger record whose entry no longer exists in Toggl is ignored, so deleting an entry lets it be written again. Entries written by early versions carry a `⟨sourceUid⟩` marker; it is still *read* for dedup, never written.
+- **Lock is opt-in:** with `LOCK__ENABLED=false` nothing is refused locally and Toggl is the only authority. When on, locked weeks are refused, not attempted.
+- **DST and day bucketing:** `start` is passed through verbatim as RFC 3339 with the source's own offset; never hardcode `+02:00`. The day or week an entry counts for is computed in `LOCK__TIMEZONE`, which is the machine's zone when blank. Containers run in UTC, so set it explicitly there.
+- **stdout is the protocol channel in stdio mode:** logs go to stderr. Do not write to stdout from anywhere in the server.
+- **JWT audience (HTTP mode):** many providers default `aud` to the client id; add a mapping that returns the exact MCP resource URL.
 - **`MapMcp` path:** pinned to `/mcp` so it byte-matches the PRM `resource`.
 
 ---
 
-## Layout — Vertical Slice Architecture (adapted for MCP)
+## Layout: Vertical Slice Architecture (adapted for MCP)
 
-One folder per MCP tool under `Features/`. Each slice is a thin `*Tool` ("endpoint": bind
-args → call handler → return) + an `internal sealed *Handler` (the only logic layer) +
-slice-local request/response records. Slices never reference each other; they share only the
-module infrastructure below. (VSA adapted: no MediatR / FluentValidation / DbContext /
-`Result<T>` — this is an MCP tool server, not an HTTP/EF web API. See `.claude/kit.profile.yaml`.)
+One folder per MCP tool under `Features/`. Each slice is a thin `*Tool` (bind args, call handler,
+return) plus an `internal sealed *Handler` (the only logic layer) and slice-local request/response
+records. Slices never reference each other; they share only the module infrastructure below. (VSA
+adapted: no MediatR, FluentValidation, DbContext or `Result<T>`, because this is an MCP tool server,
+not an HTTP/EF web API.)
 
 ```
 src/TogglMcp/
-  Program.cs              MCP + HTTP transport + auth toggle wiring
+  Program.cs              stdio or HTTP transport + auth wiring
   Features/               one vertical slice per tool (Tool + Handler + slice DTOs)
     ListProjects/ · ListTasks/ · ListEntries/ · SuggestProject/ · AddMappingRule/
     WeekStatus/ · PlanWeek/ · CommitPlan/
   Contracts/              ProjectDto (module-shared response) + mapping
   Toggl/                  ITogglClient/TogglClient (v9), throttle, models, exception   ┐
-  Tokens/                 ITogglTokenProvider (env now; vault in Phase 3)              │ module-
-  Mapping/                keyword→project rule store (JSON per user)                   │ shared
-  Lock/                   WeekLockPolicy (Fri-23:59 permanent lock, editable window)   │ infra
-  Planning/               WeekPlan + IPlanStore + SourceMarker (plan_week → commit_plan)┘
+  Tokens/                 ITogglTokenProvider (env/config)                             │ module-
+  Mapping/                keyword to project rule store (JSON per user)                │ shared
+  Lock/                   WeekLockPolicy (opt-in permanent lock, editable window)      │ infra
+  Planning/               WeekPlan + IPlanStore + SourceMarker (plan_week to commit_plan)┘
   Configuration/          TogglOptions, AuthOptions, StorageOptions, LockOptions
-Dockerfile · docker-compose.yml · deploy/Caddyfile.snippet · deploy/DEPLOY.md · .env.example · .claude/kit.profile.yaml
+tests/TogglMcp.Tests/     xunit, including a stdio end-to-end test
+Dockerfile · docker-compose.yml · deploy/ · .env.example · .claude/ (optional Claude Code config)
 ```
+
+Run the tests with `dotnet test TogglMcp.slnx`. One of them,
+`tests/TogglMcp.Tests/Hosting/StdioHostTests.cs`, launches the built server with `--stdio` and lists
+its tools through the MCP C# client.
+
+---
+
+## Status and roadmap
+
+Phase 1 (a single token from configuration) is what exists and works. Phase 2 (an identity spike:
+do users of an org-admin-added Claude connector get distinct `sub` claims?) and Phase 3 (a per-user
+encrypted token vault keyed by OIDC `sub`, registered via `/settings` behind login) were planned
+and never built. The roadmap and the open questions are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE), copyright (c) 2026 Petr Valik.
